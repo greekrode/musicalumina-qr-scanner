@@ -7,6 +7,7 @@ export interface DatabaseParticipant {
   category_name: string;
   subcategory_id: string;
   subcategory_name: string;
+  status: string;
 }
 
 export interface ParticipantData {
@@ -23,6 +24,7 @@ export interface ParticipantData {
 export interface VerificationResult {
   isVerified: boolean;
   error?: string;
+  status?: 'pending' | 'verified' | 'expired' | 'already_verified';
   matchedFields?: {
     id: boolean;
     name: boolean;
@@ -157,6 +159,7 @@ export async function verifyParticipantData(participantData: ParticipantData): P
         song_title,
         category_id,
         subcategory_id,
+        status,
         event_categories!inner(name),
         event_subcategories!inner(name)
       `)
@@ -196,13 +199,66 @@ export async function verifyParticipantData(participantData: ParticipantData): P
 
     const isVerified = Object.values(matchedFields).every(match => match);
 
-    const result: VerificationResult = {
-      isVerified,
-      matchedFields
-    };
+    // Handle status logic based on current status
+    let result: VerificationResult;
+    
+    if (!isVerified) {
+      // Data doesn't match - return unverified
+      result = {
+        isVerified: false,
+        status: dbRecord.status as any,
+        matchedFields
+      };
+    } else if (dbRecord.status === 'verified') {
+      // Already verified - mark as expired to prevent double scanning
+      await supabase
+        .from('registrations')
+        .update({ status: 'expired' })
+        .eq('id', participantData.id)
+        .eq('event_id', participantData.eventId);
 
-    // Cache successful verifications
-    setCachedVerification(participantData, result);
+      result = {
+        isVerified: false,
+        status: 'already_verified',
+        error: 'QR code already used - participant was previously verified',
+        matchedFields
+      };
+    } else if (dbRecord.status === 'pending') {
+      // First time verification - update to verified
+      const { error: updateError } = await supabase
+        .from('registrations')
+        .update({ status: 'verified' })
+        .eq('id', participantData.id)
+        .eq('event_id', participantData.eventId);
+
+      if (updateError) {
+        result = {
+          isVerified: false,
+          status: 'pending',
+          error: `Failed to update status: ${updateError.message}`,
+          matchedFields
+        };
+      } else {
+        result = {
+          isVerified: true,
+          status: 'verified',
+          matchedFields
+        };
+      }
+    } else {
+      // Status is expired or other - don't allow verification
+      result = {
+        isVerified: false,
+        status: dbRecord.status as any,
+        error: `Participant status is ${dbRecord.status} - verification not allowed`,
+        matchedFields
+      };
+    }
+
+    // Cache successful verifications (only if truly verified, not already_verified)
+    if (result.isVerified && result.status === 'verified') {
+      setCachedVerification(participantData, result);
+    }
 
     return result;
 

@@ -1,4 +1,4 @@
-import { CheckCircle, ChevronDown, ChevronUp, Copy, Database, Key, Loader, Music, Shield, Tag, User, XCircle } from 'lucide-react';
+import { CheckCircle, ChevronDown, ChevronUp, Copy, Database, Key, Loader, Music, Shield, Tag, User, X, XCircle } from 'lucide-react';
 import React from 'react';
 import { DecodedJWT } from '../utils/jwtDecoder';
 import { ParticipantData, VerificationResult, verifyParticipantData } from '../utils/participantVerifier';
@@ -84,6 +84,8 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
           <div className="flex items-center space-x-2 mb-1">
             {isVerifying ? (
               <Loader className="w-4 h-4 text-musica-burgundy/60 animate-spin" />
+            ) : dbVerification?.status === 'already_verified' ? (
+              <X className="w-4 h-4 text-amber-600" />
             ) : dbVerification?.isVerified ? (
               <CheckCircle className="w-4 h-4 text-emerald-600" />
             ) : (
@@ -94,11 +96,20 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
           <span className={`text-sm font-medium ${
             isVerifying 
               ? 'text-musica-burgundy/60' 
-              : dbVerification?.isVerified 
-                ? 'text-emerald-600' 
-                : 'text-red-600'
+              : dbVerification?.status === 'already_verified'
+                ? 'text-amber-600'
+                : dbVerification?.isVerified 
+                  ? 'text-emerald-600' 
+                  : 'text-red-600'
           }`}>
-            {isVerifying ? 'Verifying...' : dbVerification?.isVerified ? 'Verified' : 'Unverified'}
+            {isVerifying 
+              ? 'Verifying...' 
+              : dbVerification?.status === 'already_verified'
+                ? 'Already Verified'
+                : dbVerification?.isVerified 
+                  ? 'Verified' 
+                  : 'Unverified'
+            }
           </span>
         </div>
       </div>
