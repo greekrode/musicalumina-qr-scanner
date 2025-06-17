@@ -24,7 +24,7 @@ export interface ParticipantData {
 export interface VerificationResult {
   isVerified: boolean;
   error?: string;
-  status?: 'pending' | 'verified' | 'expired' | 'already_verified';
+  status?: "pending" | "verified" | "already_verified";
   matchedFields?: {
     id: boolean;
     name: boolean;
@@ -46,12 +46,15 @@ interface CachedParticipant {
 }
 
 // Cache management utilities
-const CACHE_KEY = 'musicaLumina_verifiedParticipants';
+const CACHE_KEY = "musicaLumina_verifiedParticipants";
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
 let lastScanTime = 0;
 const MIN_SCAN_DELAY = 150; // 150ms delay between scans to prevent spam
 
-function getCachedVerification(participantId: string, eventId: string): VerificationResult | null {
+function getCachedVerification(
+  participantId: string,
+  eventId: string
+): VerificationResult | null {
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (!cached) return null;
@@ -61,9 +64,10 @@ function getCachedVerification(participantId: string, eventId: string): Verifica
 
     // Find matching participant
     const match = cachedData.find(
-      item => item.id === participantId && 
-              item.eventId === eventId && 
-              (now - item.timestamp) < CACHE_DURATION
+      (item) =>
+        item.id === participantId &&
+        item.eventId === eventId &&
+        now - item.timestamp < CACHE_DURATION
     );
 
     if (match) {
@@ -72,12 +76,15 @@ function getCachedVerification(participantId: string, eventId: string): Verifica
 
     return null;
   } catch (error) {
-    console.warn('Error reading participant cache:', error);
+    console.warn("Error reading participant cache:", error);
     return null;
   }
 }
 
-function setCachedVerification(participantData: ParticipantData, result: VerificationResult): void {
+function setCachedVerification(
+  participantData: ParticipantData,
+  result: VerificationResult
+): void {
   try {
     if (!participantData.id || !participantData.eventId) return;
 
@@ -91,8 +98,12 @@ function setCachedVerification(participantData: ParticipantData, result: Verific
     // Remove expired entries and existing entry for this participant
     const now = Date.now();
     cachedData = cachedData.filter(
-      item => (now - item.timestamp) < CACHE_DURATION && 
-              !(item.id === String(participantData.id) && item.eventId === String(participantData.eventId))
+      (item) =>
+        now - item.timestamp < CACHE_DURATION &&
+        !(
+          item.id === String(participantData.id) &&
+          item.eventId === String(participantData.eventId)
+        )
     );
 
     // Add new entry if verification was successful
@@ -102,7 +113,7 @@ function setCachedVerification(participantData: ParticipantData, result: Verific
         eventId: String(participantData.eventId),
         verificationResult: result,
         timestamp: now,
-        participantData: participantData
+        participantData: participantData,
       });
     }
 
@@ -113,27 +124,32 @@ function setCachedVerification(participantData: ParticipantData, result: Verific
 
     localStorage.setItem(CACHE_KEY, JSON.stringify(cachedData));
   } catch (error) {
-    console.warn('Error saving participant cache:', error);
+    console.warn("Error saving participant cache:", error);
   }
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function verifyParticipantData(participantData: ParticipantData): Promise<VerificationResult> {
+export async function verifyParticipantData(
+  participantData: ParticipantData
+): Promise<VerificationResult> {
   try {
     if (!participantData.id || !participantData.eventId) {
       return {
         isVerified: false,
-        error: 'Missing required fields: id or eventId'
+        error: "Missing required fields: id or eventId",
       };
     }
 
     // Check cache first
-    const cachedResult = getCachedVerification(String(participantData.id), String(participantData.eventId));
+    const cachedResult = getCachedVerification(
+      String(participantData.id),
+      String(participantData.eventId)
+    );
     if (cachedResult) {
-      console.log('Participant verification loaded from cache');
+      console.log("Participant verification loaded from cache");
       return cachedResult;
     }
 
@@ -147,12 +163,13 @@ export async function verifyParticipantData(participantData: ParticipantData): P
       lastScanTime = Date.now();
     }
 
-    const { supabase } = await import('../lib/supabase');
+    const { supabase } = await import("../lib/supabase");
 
     // Query the registrations table with joins to get category and subcategory names
     const { data: dbRecord, error } = await supabase
-      .from('registrations')
-      .select(`
+      .from("registrations")
+      .select(
+        `
         id,
         event_id,
         participant_name,
@@ -162,28 +179,29 @@ export async function verifyParticipantData(participantData: ParticipantData): P
         status,
         event_categories!inner(name),
         event_subcategories!inner(name)
-      `)
-      .eq('id', participantData.id)
-      .eq('event_id', participantData.eventId)
+      `
+      )
+      .eq("id", participantData.id)
+      .eq("event_id", participantData.eventId)
       .single();
 
     if (error) {
       return {
         isVerified: false,
-        error: `Database query failed: ${error.message}`
+        error: `Database query failed: ${error.message}`,
       };
     }
 
     if (!dbRecord) {
       return {
         isVerified: false,
-        error: 'Participant not found'
+        error: "Participant not found",
       };
     }
 
     // Extract category and subcategory names from the joined data
-    const categoryName = (dbRecord.event_categories as any)?.name || '';
-    const subcategoryName = (dbRecord.event_subcategories as any)?.name || '';
+    const categoryName = (dbRecord.event_categories as any)?.name || "";
+    const subcategoryName = (dbRecord.event_subcategories as any)?.name || "";
 
     // Compare all fields
     const matchedFields = {
@@ -191,81 +209,78 @@ export async function verifyParticipantData(participantData: ParticipantData): P
       name: dbRecord.participant_name === participantData.name,
       eventId: String(dbRecord.event_id) === String(participantData.eventId),
       songTitle: dbRecord.song_title === participantData.songTitle,
-      categoryId: String(dbRecord.category_id) === String(participantData.categoryId),
+      categoryId:
+        String(dbRecord.category_id) === String(participantData.categoryId),
       categoryName: categoryName === participantData.categoryName,
-      subCategoryId: String(dbRecord.subcategory_id) === String(participantData.subCategoryId),
-      subCategoryName: subcategoryName === participantData.subCategoryName
+      subCategoryId:
+        String(dbRecord.subcategory_id) ===
+        String(participantData.subCategoryId),
+      subCategoryName: subcategoryName === participantData.subCategoryName,
     };
 
-    const isVerified = Object.values(matchedFields).every(match => match);
+    const isVerified = Object.values(matchedFields).every((match) => match);
 
     // Handle status logic based on current status
     let result: VerificationResult;
-    
+
     if (!isVerified) {
       // Data doesn't match - return unverified
       result = {
         isVerified: false,
         status: dbRecord.status as any,
-        matchedFields
+        matchedFields,
       };
-    } else if (dbRecord.status === 'verified') {
-      // Already verified - mark as expired to prevent double scanning
-      await supabase
-        .from('registrations')
-        .update({ status: 'expired' })
-        .eq('id', participantData.id)
-        .eq('event_id', participantData.eventId);
-
+    } else if (dbRecord.status === "verified") {
+      // Already verified - don't allow re-verification
       result = {
         isVerified: false,
-        status: 'already_verified',
-        error: 'QR code already used - participant was previously verified',
-        matchedFields
+        status: "already_verified",
+        error: "QR code already used - participant was previously verified",
+        matchedFields,
       };
-    } else if (dbRecord.status === 'pending') {
+    } else if (dbRecord.status === "pending") {
       // First time verification - update to verified
       const { error: updateError } = await supabase
-        .from('registrations')
-        .update({ status: 'verified' })
-        .eq('id', participantData.id)
-        .eq('event_id', participantData.eventId);
+        .from("registrations")
+        .update({ status: "verified" })
+        .eq("id", participantData.id)
+        .eq("event_id", participantData.eventId)
+        .select();
 
       if (updateError) {
         result = {
           isVerified: false,
-          status: 'pending',
+          status: "pending",
           error: `Failed to update status: ${updateError.message}`,
-          matchedFields
+          matchedFields,
         };
       } else {
         result = {
           isVerified: true,
-          status: 'verified',
-          matchedFields
+          status: "verified",
+          matchedFields,
         };
       }
     } else {
-      // Status is expired or other - don't allow verification
+      // Status is neither pending nor verified - don't allow verification
       result = {
         isVerified: false,
         status: dbRecord.status as any,
         error: `Participant status is ${dbRecord.status} - verification not allowed`,
-        matchedFields
+        matchedFields,
       };
     }
 
     // Cache successful verifications (only if truly verified, not already_verified)
-    if (result.isVerified && result.status === 'verified') {
+    if (result.isVerified && result.status === "verified") {
       setCachedVerification(participantData, result);
     }
 
     return result;
-
   } catch (error) {
     return {
       isVerified: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      error: error instanceof Error ? error.message : "Unknown error occurred",
     };
   }
 }
@@ -274,9 +289,9 @@ export async function verifyParticipantData(participantData: ParticipantData): P
 export function clearVerificationCache(): void {
   try {
     localStorage.removeItem(CACHE_KEY);
-    console.log('Participant verification cache cleared');
+    console.log("Participant verification cache cleared");
   } catch (error) {
-    console.warn('Error clearing participant cache:', error);
+    console.warn("Error clearing participant cache:", error);
   }
 }
 
@@ -288,22 +303,29 @@ export function getCacheStats(): { count: number; oldestEntry: number | null } {
 
     const cachedData: CachedParticipant[] = JSON.parse(cached);
     const now = Date.now();
-    
+
     // Filter out expired entries
-    const validEntries = cachedData.filter(item => (now - item.timestamp) < CACHE_DURATION);
-    
+    const validEntries = cachedData.filter(
+      (item) => now - item.timestamp < CACHE_DURATION
+    );
+
     return {
       count: validEntries.length,
-      oldestEntry: validEntries.length > 0 ? Math.min(...validEntries.map(item => item.timestamp)) : null
+      oldestEntry:
+        validEntries.length > 0
+          ? Math.min(...validEntries.map((item) => item.timestamp))
+          : null,
     };
   } catch (error) {
-    console.warn('Error reading cache stats:', error);
+    console.warn("Error reading cache stats:", error);
     return { count: 0, oldestEntry: null };
   }
 }
 
 // Alternative function that uses the same Supabase implementation
-export async function verifyParticipantDataDirect(participantData: ParticipantData): Promise<VerificationResult> {
+export async function verifyParticipantDataDirect(
+  participantData: ParticipantData
+): Promise<VerificationResult> {
   // Use the same implementation as the main function
   return await verifyParticipantData(participantData);
-} 
+}
