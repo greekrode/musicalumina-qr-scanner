@@ -106,8 +106,9 @@ function setCachedVerification(
         )
     );
 
-    // Add new entry if verification was successful
-    if (result.isVerified) {
+    // Add new entry if verification was successful or already verified
+    // This includes both newly verified and already_verified statuses
+    if (result.isVerified || result.status === "already_verified") {
       cachedData.push({
         id: String(participantData.id),
         eventId: String(participantData.eventId),
@@ -260,6 +261,15 @@ export async function verifyParticipantData(
           status: "verified",
           matchedFields,
         };
+        
+        // Update cache immediately after successful database update
+        // This ensures subsequent scans will show "already_verified" status
+        setCachedVerification(participantData, {
+          isVerified: false,
+          status: "already_verified",
+          error: "QR code already used - participant was previously verified",
+          matchedFields,
+        });
       }
     } else {
       // Status is neither pending nor verified - don't allow verification
@@ -271,8 +281,10 @@ export async function verifyParticipantData(
       };
     }
 
-    // Cache successful verifications (only if truly verified, not already_verified)
-    if (result.isVerified && result.status === "verified") {
+    // Cache both successful verifications and already_verified states
+    // This prevents repeated database queries for the same participant
+    if ((result.isVerified && result.status === "verified") || 
+        result.status === "already_verified") {
       setCachedVerification(participantData, result);
     }
 
