@@ -1,0 +1,33 @@
+{
+  "name": "Musica Lumina QR Scanner",
+  "short_name": "ML QR Scanner",
+  "description": "Professional QR code scanner with JWT decoding for Musica Lumina",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#491822",
+  "theme_color": "#491822",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "productivity"],
+  "screenshots": [
+    {
+      "src": "/screenshot-mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow"
+    }
+  ]
+}
