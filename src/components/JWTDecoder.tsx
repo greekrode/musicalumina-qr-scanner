@@ -1,7 +1,7 @@
+import { CheckCircle, ChevronDown, ChevronUp, Copy, Database, Key, Loader, Music, Shield, Tag, User, XCircle } from 'lucide-react';
 import React from 'react';
-import { Key, Clock, User, Shield, Copy, ChevronDown, ChevronUp, CheckCircle, XCircle, Music, Hash, Tag, Database, Loader } from 'lucide-react';
-import { DecodedJWT, formatJWTPayload } from '../utils/jwtDecoder';
-import { verifyParticipantData, VerificationResult, ParticipantData } from '../utils/participantVerifier';
+import { DecodedJWT } from '../utils/jwtDecoder';
+import { ParticipantData, VerificationResult, verifyParticipantData } from '../utils/participantVerifier';
 
 interface JWTDecoderProps {
   decodedJWT: DecodedJWT;
@@ -10,7 +10,6 @@ interface JWTDecoderProps {
 
 export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
   const [showHeader, setShowHeader] = React.useState(false);
-  const [showRawPayload, setShowRawPayload] = React.useState(false);
   const [dbVerification, setDbVerification] = React.useState<VerificationResult | null>(null);
   const [isVerifying, setIsVerifying] = React.useState(false);
 
@@ -57,7 +56,7 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
     <div className="bg-musica-gold/10 backdrop-blur-lg border border-musica-gold/30 rounded-2xl p-6 space-y-4 shadow-lg">
       <div className="flex items-center space-x-3 mb-4">
         <Key className="w-5 h-5 text-musica-burgundy" />
-        <h3 className="text-musica-burgundy font-semibold">JWT Token Decoded</h3>
+        <h3 className="text-musica-burgundy font-semibold">QR Data</h3>
         {isExpired && (
           <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-medium border border-red-200">
             Expired
@@ -67,16 +66,6 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
 
       {/* Token Status */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white/60 rounded-lg p-3 border border-musica-burgundy/10">
-          <div className="flex items-center space-x-2 mb-1">
-            <Shield className="w-4 h-4 text-musica-burgundy/60" />
-            <span className="text-musica-burgundy/60 text-sm">Algorithm</span>
-          </div>
-          <span className="text-musica-burgundy text-sm font-medium">
-            {decodedJWT.header.alg || 'Unknown'}
-          </span>
-        </div>
-
         <div className="bg-white/60 rounded-lg p-3 border border-musica-burgundy/10">
           <div className="flex items-center space-x-2 mb-1">
             {decodedJWT.isSignatureValid ? (
@@ -135,25 +124,6 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
         </div>
         
         <div className="divide-y divide-musica-burgundy/5">
-          {participantData.id && (
-            <div className="px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Hash className="w-4 h-4 text-musica-burgundy/60" />
-                <span className="text-musica-burgundy/60 text-sm font-medium">Participant ID</span>
-              </div>
-              <span className="text-musica-burgundy font-mono text-sm">{participantData.id}</span>
-            </div>
-          )}
-
-          {participantData.eventId && (
-            <div className="px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Hash className="w-4 h-4 text-musica-burgundy/60" />
-                <span className="text-musica-burgundy/60 text-sm font-medium">Event ID</span>
-              </div>
-              <span className="text-musica-burgundy font-mono text-sm">{participantData.eventId}</span>
-            </div>
-          )}
           
           {participantData.name && (
             <div className="px-4 py-3 flex items-center justify-between">
