@@ -1,4 +1,4 @@
-import { CheckCircle, ChevronDown, ChevronUp, Copy, Database, Key, Loader, Music, Shield, Tag, User, X, XCircle } from 'lucide-react';
+import { CheckCircle, ChevronDown, ChevronUp, Copy, Database, GraduationCap, Key, Loader, Music, Shield, Tag, User, X, XCircle } from 'lucide-react';
 import React from 'react';
 import { DecodedJWT } from '../utils/jwtDecoder';
 import { ParticipantData, VerificationResult, verifyParticipantData } from '../utils/participantVerifier';
@@ -6,6 +6,16 @@ import { ParticipantData, VerificationResult, verifyParticipantData } from '../u
 interface JWTDecoderProps {
   decodedJWT: DecodedJWT;
   onCopy: (text: string) => void;
+}
+
+/** Small inline icon showing DB match status for a single field. */
+function FieldMatchIcon({ matched }: { matched: boolean | undefined }) {
+  if (matched === undefined) return null;
+  return matched ? (
+    <CheckCircle className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+  ) : (
+    <XCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+  );
 }
 
 export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
@@ -19,7 +29,7 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
 
   // Run database verification when component loads
   React.useEffect(() => {
-    if (decodedJWT.isValid && decodedJWT.isSignatureValid && participantData.id) {
+    if (decodedJWT.isValid && decodedJWT.isSignatureValid && participantData.name) {
       setIsVerifying(true);
       verifyParticipantData(participantData)
         .then(result => {
@@ -51,12 +61,22 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
 
   // Check if token is expired
   const isExpired = decodedJWT.payload.exp && Date.now() / 1000 > decodedJWT.payload.exp;
-  
+
+  const mf = dbVerification?.matchedFields;
+  // Auto-detect role from DB verification result (no role field needed in JWT)
+  const isTeacher = dbVerification?.detectedRole === 'teacher';
+
   return (
     <div className="bg-musica-gold/10 backdrop-blur-lg border border-musica-gold/30 rounded-2xl p-6 space-y-4 shadow-lg">
       <div className="flex items-center space-x-3 mb-4">
         <Key className="w-5 h-5 text-musica-burgundy" />
         <h3 className="text-musica-burgundy font-semibold">QR Data</h3>
+        {isTeacher && (
+          <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-medium border border-blue-200 flex items-center space-x-1">
+            <GraduationCap className="w-3 h-3" />
+            <span>Teacher</span>
+          </span>
+        )}
         {isExpired && (
           <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-medium border border-red-200">
             Expired
@@ -65,7 +85,7 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
       </div>
 
       {/* Token Status */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <div className="bg-white/60 rounded-lg p-3 border border-musica-burgundy/10">
           <div className="flex items-center space-x-2 mb-1">
             {decodedJWT.isSignatureValid ? (
@@ -84,31 +104,31 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
           <div className="flex items-center space-x-2 mb-1">
             {isVerifying ? (
               <Loader className="w-4 h-4 text-musica-burgundy/60 animate-spin" />
-            ) : dbVerification?.status === 'already_verified' ? (
-              <X className="w-4 h-4 text-amber-600" />
             ) : dbVerification?.isVerified ? (
               <CheckCircle className="w-4 h-4 text-emerald-600" />
-            ) : (
+            ) : dbVerification ? (
               <XCircle className="w-4 h-4 text-red-600" />
+            ) : (
+              <Database className="w-4 h-4 text-musica-burgundy/40" />
             )}
             <span className="text-musica-burgundy/60 text-sm">Database</span>
           </div>
           <span className={`text-sm font-medium ${
-            isVerifying 
-              ? 'text-musica-burgundy/60' 
-              : dbVerification?.status === 'already_verified'
-                ? 'text-amber-600'
-                : dbVerification?.isVerified 
-                  ? 'text-emerald-600' 
-                  : 'text-red-600'
+            isVerifying
+              ? 'text-musica-burgundy/60'
+              : dbVerification?.isVerified
+                ? 'text-emerald-600'
+                : dbVerification
+                  ? 'text-red-600'
+                  : 'text-musica-burgundy/40'
           }`}>
-            {isVerifying 
-              ? 'Verifying...' 
-              : dbVerification?.status === 'already_verified'
-                ? 'Already Verified'
-                : dbVerification?.isVerified 
-                  ? 'Verified' 
-                  : 'Unverified'
+            {isVerifying
+              ? 'Verifying...'
+              : dbVerification?.isVerified
+                ? 'Matched'
+                : dbVerification
+                  ? 'Mismatch'
+                  : 'Pending'
             }
           </span>
         </div>
@@ -119,7 +139,7 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
         <div className="bg-amber-50/80 border border-amber-200 rounded-lg p-3">
           <div className="flex items-center space-x-2 mb-1">
             <Database className="w-4 h-4 text-amber-600" />
-            <span className="text-amber-700 text-sm font-medium">Database Verification Note</span>
+            <span className="text-amber-700 text-sm font-medium">Verification Note</span>
           </div>
           <p className="text-amber-600 text-xs">{dbVerification.error}</p>
         </div>
@@ -129,59 +149,61 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
       <div className="bg-white/60 rounded-lg border border-musica-burgundy/10 overflow-hidden">
         <div className="bg-musica-burgundy/5 px-4 py-3 border-b border-musica-burgundy/10">
           <h4 className="text-musica-burgundy font-semibold flex items-center space-x-2">
-            <Music className="w-4 h-4" />
-            <span>Participant Information</span>
+            {isTeacher ? <GraduationCap className="w-4 h-4" /> : <Music className="w-4 h-4" />}
+            <span>{isTeacher ? 'Teacher Information' : 'Participant Information'}</span>
           </h4>
         </div>
-        
+
         <div className="divide-y divide-musica-burgundy/5">
-          
+
           {participantData.name && (
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <User className="w-4 h-4 text-musica-burgundy/60" />
                 <span className="text-musica-burgundy/60 text-sm font-medium">Name</span>
               </div>
-              <span className="text-musica-burgundy font-medium text-sm">{participantData.name}</span>
+              <div className="flex items-center space-x-2">
+                <span className="text-musica-burgundy font-medium text-sm">{participantData.name}</span>
+                <FieldMatchIcon matched={mf?.name} />
+              </div>
             </div>
           )}
-          
+
           {participantData.songTitle && (
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Music className="w-4 h-4 text-musica-burgundy/60" />
                 <span className="text-musica-burgundy/60 text-sm font-medium">Song Title</span>
               </div>
-              <span className="text-musica-burgundy font-medium text-sm">{participantData.songTitle}</span>
+              <div className="flex items-center space-x-2">
+                <span className="text-musica-burgundy font-medium text-sm">{participantData.songTitle}</span>
+                <FieldMatchIcon matched={mf?.songTitle} />
+              </div>
             </div>
           )}
-          
+
           {participantData.categoryName && (
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Tag className="w-4 h-4 text-musica-burgundy/60" />
                 <span className="text-musica-burgundy/60 text-sm font-medium">Category</span>
               </div>
-              <div className="text-right">
+              <div className="flex items-center space-x-2">
                 <span className="text-musica-burgundy font-medium text-sm">{participantData.categoryName}</span>
-                {participantData.categoryId && (
-                  <span className="text-musica-burgundy/40 text-xs block">ID: {participantData.categoryId}</span>
-                )}
+                <FieldMatchIcon matched={mf?.categoryName} />
               </div>
             </div>
           )}
-          
+
           {participantData.subCategoryName && (
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Tag className="w-4 h-4 text-musica-burgundy/60" />
                 <span className="text-musica-burgundy/60 text-sm font-medium">Sub Category</span>
               </div>
-              <div className="text-right">
+              <div className="flex items-center space-x-2">
                 <span className="text-musica-burgundy font-medium text-sm">{participantData.subCategoryName}</span>
-                {participantData.subCategoryId && (
-                  <span className="text-musica-burgundy/40 text-xs block">ID: {participantData.subCategoryId}</span>
-                )}
+                <FieldMatchIcon matched={mf?.subCategoryName} />
               </div>
             </div>
           )}
@@ -201,7 +223,7 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
             <ChevronDown className="w-4 h-4 text-musica-burgundy/60" />
           )}
         </button>
-        
+
         {showHeader && (
           <div className="mt-3 space-y-3">
             <div className="bg-musica-cream/50 rounded-lg p-4 border border-musica-burgundy/10">
@@ -219,7 +241,7 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
                 {JSON.stringify(decodedJWT.header, null, 2)}
               </pre>
             </div>
-            
+
             <div className="bg-musica-cream/50 rounded-lg p-4 border border-musica-burgundy/10">
               <div className="flex items-center justify-between mb-2">
                 <h5 className="text-musica-burgundy font-medium text-sm">Raw Payload</h5>

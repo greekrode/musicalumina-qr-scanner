@@ -1,6 +1,6 @@
-import { Camera, Copy, X } from "lucide-react";
+import { Camera, Copy, Minus, Plus, X, ZoomIn } from "lucide-react";
 import QrScanner from "qr-scanner";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DecodedJWT, decodeJWT, isJWT } from "../utils/jwtDecoder";
 import JWTDecoder from "./JWTDecoder";
 
@@ -16,6 +16,13 @@ interface QRScannerProps {
   showHistoryProp?: boolean;
 }
 
+interface ZoomCapabilities {
+  min: number;
+  max: number;
+  step: number;
+  supported: boolean;
+}
+
 export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [qrScanner, setQrScanner] = useState<QrScanner | null>(null);
@@ -27,6 +34,17 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
   const [showHistory, setShowHistory] = useState(showHistoryProp);
   const [hasCamera, setHasCamera] = useState(true);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  // Zoom & camera control state
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [zoomCapabilities, setZoomCapabilities] = useState<ZoomCapabilities>({
+    min: 1,
+    max: 1,
+    step: 0.1,
+    supported: false,
+  });
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(1);
 
   // Update showHistory when prop changes
   useEffect(() => {
@@ -85,6 +103,68 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
     }
   }, []);
 
+  // Apply zoom to the active video track
+  const applyZoom = useCallback(
+    async (zoom: number) => {
+      if (!videoRef.current?.srcObject) return;
+      const stream = videoRef.current.srcObject as MediaStream;
+      const track = stream.getVideoTracks()[0];
+      if (!track) return;
+
+      const clamped = Math.min(
+        Math.max(zoom, zoomCapabilities.min),
+        zoomCapabilities.max
+      );
+
+      try {
+        await track.applyConstraints({
+          advanced: [{ zoom: clamped } as any],
+        });
+        setZoomLevel(clamped);
+      } catch (err) {
+        console.warn("Failed to apply zoom:", err);
+      }
+    },
+    [zoomCapabilities]
+  );
+
+  // Configure camera capabilities after scanner starts
+  const configureCameraControls = useCallback(async () => {
+    if (!videoRef.current?.srcObject) return;
+    const stream = videoRef.current.srcObject as MediaStream;
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
+
+    // Read zoom capabilities
+    const capabilities = track.getCapabilities() as any;
+    if (capabilities.zoom) {
+      setZoomCapabilities({
+        min: capabilities.zoom.min ?? 1,
+        max: capabilities.zoom.max ?? 1,
+        step: capabilities.zoom.step ?? 0.1,
+        supported: true,
+      });
+      setZoomLevel(capabilities.zoom.min ?? 1);
+    } else {
+      setZoomCapabilities({ min: 1, max: 1, step: 0.1, supported: false });
+    }
+
+    // Enable continuous autofocus if supported
+    if (
+      capabilities.focusMode &&
+      capabilities.focusMode.includes("continuous")
+    ) {
+      try {
+        await track.applyConstraints({
+          advanced: [{ focusMode: "continuous" } as any],
+        });
+        console.log("Continuous autofocus enabled");
+      } catch (err) {
+        console.warn("Failed to set continuous autofocus:", err);
+      }
+    }
+  }, []);
+
   const startScanning = async () => {
     if (!qrScanner) return;
 
@@ -92,6 +172,12 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
       setError(null);
       await qrScanner.start();
       setIsScanning(true);
+
+      // Wait a tick for the stream to be available on the video element,
+      // then configure zoom/focus controls
+      setTimeout(() => {
+        configureCameraControls();
+      }, 300);
     } catch (err) {
       console.error("Camera error:", err);
       setError(
@@ -105,8 +191,51 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
     if (qrScanner) {
       qrScanner.stop();
       setIsScanning(false);
+      setZoomLevel(1);
+      setZoomCapabilities({ min: 1, max: 1, step: 0.1, supported: false });
     }
   };
+
+  // --- Pinch-to-zoom handlers ---
+  const getTouchDistance = (touches: React.TouchList): number => {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && zoomCapabilities.supported) {
+      pinchStartDistRef.current = getTouchDistance(e.touches);
+      pinchStartZoomRef.current = zoomLevel;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (
+      e.touches.length === 2 &&
+      pinchStartDistRef.current !== null &&
+      zoomCapabilities.supported
+    ) {
+      const currentDist = getTouchDistance(e.touches);
+      const scale = currentDist / pinchStartDistRef.current;
+      const newZoom = pinchStartZoomRef.current * scale;
+      applyZoom(newZoom);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    pinchStartDistRef.current = null;
+  };
+
+  // Zoom step for +/- buttons
+  const zoomStep = useCallback(
+    (direction: 1 | -1) => {
+      const step = (zoomCapabilities.max - zoomCapabilities.min) * 0.1;
+      applyZoom(zoomLevel + step * direction);
+    },
+    [zoomLevel, zoomCapabilities, applyZoom]
+  );
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -133,6 +262,9 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
     }
   };
 
+  // Format zoom display (e.g. "1.0x", "2.5x")
+  const formatZoom = (z: number) => `${z.toFixed(1)}x`;
+
   return (
     <div className="p-4 space-y-6">
       {/* Copy Feedback */}
@@ -145,7 +277,12 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
       {/* Camera Section */}
       <div className="relative">
         <div className="bg-white/80 backdrop-blur-lg rounded-2xl p-6 border border-musica-burgundy/10 shadow-xl">
-          <div className="relative aspect-square max-w-sm mx-auto">
+          <div
+            className="relative aspect-square max-w-sm mx-auto"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
             <video
               ref={videoRef}
               className="w-full h-full object-cover rounded-xl bg-musica-burgundy/10 shadow-inner"
@@ -183,6 +320,45 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
               </div>
             )}
           </div>
+
+          {/* Zoom Controls — only shown when scanning and zoom is supported */}
+          {isScanning && zoomCapabilities.supported && (
+            <div className="mt-4 px-2">
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => zoomStep(-1)}
+                  className="flex-shrink-0 w-9 h-9 rounded-full bg-musica-burgundy/10 hover:bg-musica-burgundy/20 flex items-center justify-center transition-colors"
+                  aria-label="Zoom out"
+                >
+                  <Minus className="w-4 h-4 text-musica-burgundy" />
+                </button>
+
+                <div className="flex-1 flex items-center space-x-3">
+                  <ZoomIn className="w-4 h-4 text-musica-burgundy/50 flex-shrink-0" />
+                  <input
+                    type="range"
+                    min={zoomCapabilities.min}
+                    max={zoomCapabilities.max}
+                    step={zoomCapabilities.step}
+                    value={zoomLevel}
+                    onChange={(e) => applyZoom(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-musica-burgundy/10 rounded-full appearance-none cursor-pointer accent-musica-gold"
+                  />
+                  <span className="text-musica-burgundy/70 text-sm font-mono w-12 text-right flex-shrink-0">
+                    {formatZoom(zoomLevel)}
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => zoomStep(1)}
+                  className="flex-shrink-0 w-9 h-9 rounded-full bg-musica-burgundy/10 hover:bg-musica-burgundy/20 flex items-center justify-center transition-colors"
+                  aria-label="Zoom in"
+                >
+                  <Plus className="w-4 h-4 text-musica-burgundy" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Controls */}
           <div className="flex justify-center mt-6">
