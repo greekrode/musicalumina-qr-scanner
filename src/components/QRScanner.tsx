@@ -389,47 +389,60 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
         </div>
       </div>
 
-      {/* JWT Decoder */}
-      {decodedJWT && (
-        <JWTDecoder decodedJWT={decodedJWT} onCopy={copyToClipboard} />
-      )}
-
-      {/* Scan Result */}
-      {scanResult && !decodedJWT && (
-        <div className="bg-emerald-50/80 backdrop-blur-lg border border-emerald-200 rounded-2xl p-6 shadow-lg">
-          <div className="flex items-start justify-between mb-3">
-            <h3 className="text-emerald-700 font-semibold">Latest Scan</h3>
+      {/* Result Modal */}
+      {(decodedJWT || scanResult) && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => {
+            setScanResult(null);
+            setDecodedJWT(null);
+          }}
+        >
+          <div
+            className="relative w-full max-w-sm max-h-[85vh] overflow-y-auto m-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
-              onClick={() => setScanResult(null)}
-              className="text-emerald-600 hover:text-emerald-700 transition-colors"
+              onClick={() => {
+                setScanResult(null);
+                setDecodedJWT(null);
+              }}
+              className="absolute top-3 right-3 z-10 w-8 h-8 bg-white/90 backdrop-blur rounded-full flex items-center justify-center shadow-md hover:bg-white transition-colors"
             >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="bg-white/60 rounded-lg p-4 mb-4 border border-emerald-100">
-            <p className="text-musica-burgundy font-mono text-sm break-all">
-              {scanResult}
-            </p>
-          </div>
-
-          <div className="flex space-x-3">
-            <button
-              onClick={() => copyToClipboard(scanResult)}
-              className="flex-1 bg-musica-burgundy hover:bg-musica-burgundy/90 text-musica-cream px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
-            >
-              <Copy className="w-4 h-4" />
-              <span>Copy</span>
+              <X className="w-4 h-4 text-musica-burgundy" />
             </button>
 
-            {isUrl(scanResult) && (
-              <button
-                onClick={() => window.open(scanResult, "_blank")}
-                className="flex-1 bg-musica-gold hover:bg-musica-gold/90 text-musica-burgundy px-4 py-2 rounded-lg font-medium transition-colors"
-              >
-                Open Link
-              </button>
-            )}
+            {decodedJWT ? (
+              <JWTDecoder decodedJWT={decodedJWT} />
+            ) : scanResult ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 shadow-lg">
+                <h3 className="text-emerald-700 font-semibold mb-3">
+                  Scan Result
+                </h3>
+                <div className="bg-white/60 rounded-lg p-4 mb-4 border border-emerald-100">
+                  <p className="text-musica-burgundy font-mono text-sm break-all">
+                    {scanResult}
+                  </p>
+                </div>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => copyToClipboard(scanResult)}
+                    className="flex-1 bg-musica-burgundy hover:bg-musica-burgundy/90 text-musica-cream px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>Copy</span>
+                  </button>
+                  {isUrl(scanResult) && (
+                    <button
+                      onClick={() => window.open(scanResult, "_blank")}
+                      className="flex-1 bg-musica-gold hover:bg-musica-gold/90 text-musica-burgundy px-4 py-2 rounded-lg font-medium transition-colors"
+                    >
+                      Open Link
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}

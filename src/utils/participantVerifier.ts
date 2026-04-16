@@ -25,8 +25,6 @@ export interface VerificationResult {
   isVerified: boolean;
   error?: string;
   status?: "pending" | "verified" | "already_verified";
-  /** Auto-detected role: 'participant' | 'teacher' | undefined (if not found) */
-  detectedRole?: "participant" | "teacher";
   matchedFields?: {
     name: boolean;
     songTitle: boolean;
@@ -126,13 +124,8 @@ function normalize(s: string | undefined | null): string {
 }
 
 /**
- * Main verification entry point.
- *
- * Strategy (fallback chain):
- *   1. Try to match as a **participant** (participant_name + category + subcategory).
- *   2. If no participant found, try to match as a **teacher** (registrant_name
- *      where registration_status = 'teacher').
- *   3. If neither matches → invalid QR.
+ * Verify participant data against the database.
+ * Matches by participant_name + category + subcategory.
  */
 export async function verifyParticipantData(
   participantData: ParticipantData
@@ -162,25 +155,15 @@ export async function verifyParticipantData(
     }
     lastScanTime = Date.now();
 
-    // Step 1: Try participant lookup
     const participantResult = await tryVerifyAsParticipant(participantData);
     if (participantResult) {
       setCachedVerification(participantData, participantResult);
       return participantResult;
     }
 
-    // Step 2: Participant not found → try teacher lookup
-    const teacherResult = await tryVerifyAsTeacher(participantData);
-    if (teacherResult) {
-      setCachedVerification(participantData, teacherResult);
-      return teacherResult;
-    }
-
-    // Step 3: Neither matched → invalid
     const result: VerificationResult = {
       isVerified: false,
-      error:
-        "Not found in database — name does not match any participant or teacher",
+      error: "Not found in database — name does not match any participant",
     };
     setCachedVerification(participantData, result);
     return result;
@@ -284,7 +267,6 @@ async function tryVerifyAsParticipant(
 
   return {
     isVerified,
-    detectedRole: "participant",
     status: isVerified ? "verified" : "pending",
     matchedFields,
     ...(isVerified
@@ -297,67 +279,6 @@ async function tryVerifyAsParticipant(
             .map(([k]) => k)
             .join(", ")}`,
         }),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Teacher verification
-// ---------------------------------------------------------------------------
-
-/**
- * Returns a VerificationResult if the name was found as a teacher registrant,
- * or `null` if no teacher matched (so the caller surfaces "invalid").
- */
-async function tryVerifyAsTeacher(
-  participantData: ParticipantData
-): Promise<VerificationResult | null> {
-  const { supabase } = await import("../lib/supabase");
-
-  const { data: dbRecords, error } = await supabase
-    .from("registrations")
-    .select(
-      `
-      id,
-      event_id,
-      registrant_name,
-      registration_status
-    `
-    )
-    .ilike("registrant_name", participantData.name!)
-    .eq("registration_status", "teacher");
-
-  if (error) {
-    return {
-      isVerified: false,
-      error: `Database query failed: ${error.message}`,
-    };
-  }
-
-  if (!dbRecords || dbRecords.length === 0) {
-    // No teacher found either — return null so caller surfaces "invalid"
-    return null;
-  }
-
-  const nameMatched = dbRecords.some(
-    (record) =>
-      normalize(record.registrant_name) === normalize(participantData.name)
-  );
-
-  const matchedFields = {
-    name: nameMatched,
-    songTitle: true, // N/A for teachers
-    categoryName: true, // N/A for teachers
-    subCategoryName: true, // N/A for teachers
-  };
-
-  return {
-    isVerified: nameMatched,
-    detectedRole: "teacher",
-    status: nameMatched ? "verified" : "pending",
-    matchedFields,
-    ...(nameMatched
-      ? {}
-      : { error: "Teacher name does not match database records" }),
   };
 }
 

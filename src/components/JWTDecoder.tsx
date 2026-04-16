@@ -1,11 +1,10 @@
-import { CheckCircle, ChevronDown, ChevronUp, Copy, Database, GraduationCap, Key, Loader, Music, Shield, Tag, User, X, XCircle } from 'lucide-react';
+import { CheckCircle, Database, Key, Loader, Music, Shield, Tag, User, XCircle } from 'lucide-react';
 import React from 'react';
 import { DecodedJWT } from '../utils/jwtDecoder';
 import { ParticipantData, VerificationResult, verifyParticipantData } from '../utils/participantVerifier';
 
 interface JWTDecoderProps {
   decodedJWT: DecodedJWT;
-  onCopy: (text: string) => void;
 }
 
 /** Small inline icon showing DB match status for a single field. */
@@ -18,8 +17,7 @@ function FieldMatchIcon({ matched }: { matched: boolean | undefined }) {
   );
 }
 
-export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
-  const [showHeader, setShowHeader] = React.useState(false);
+export default function JWTDecoder({ decodedJWT }: JWTDecoderProps) {
   const [dbVerification, setDbVerification] = React.useState<VerificationResult | null>(null);
   const [isVerifying, setIsVerifying] = React.useState(false);
 
@@ -63,20 +61,12 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
   const isExpired = decodedJWT.payload.exp && Date.now() / 1000 > decodedJWT.payload.exp;
 
   const mf = dbVerification?.matchedFields;
-  // Auto-detect role from DB verification result (no role field needed in JWT)
-  const isTeacher = dbVerification?.detectedRole === 'teacher';
 
   return (
     <div className="bg-musica-gold/10 backdrop-blur-lg border border-musica-gold/30 rounded-2xl p-6 space-y-4 shadow-lg">
       <div className="flex items-center space-x-3 mb-4">
         <Key className="w-5 h-5 text-musica-burgundy" />
         <h3 className="text-musica-burgundy font-semibold">QR Data</h3>
-        {isTeacher && (
-          <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-medium border border-blue-200 flex items-center space-x-1">
-            <GraduationCap className="w-3 h-3" />
-            <span>Teacher</span>
-          </span>
-        )}
         {isExpired && (
           <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-medium border border-red-200">
             Expired
@@ -149,8 +139,8 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
       <div className="bg-white/60 rounded-lg border border-musica-burgundy/10 overflow-hidden">
         <div className="bg-musica-burgundy/5 px-4 py-3 border-b border-musica-burgundy/10">
           <h4 className="text-musica-burgundy font-semibold flex items-center space-x-2">
-            {isTeacher ? <GraduationCap className="w-4 h-4" /> : <Music className="w-4 h-4" />}
-            <span>{isTeacher ? 'Teacher Information' : 'Participant Information'}</span>
+            <Music className="w-4 h-4" />
+            <span>Participant Information</span>
           </h4>
         </div>
 
@@ -210,56 +200,6 @@ export default function JWTDecoder({ decodedJWT, onCopy }: JWTDecoderProps) {
         </div>
       </div>
 
-      {/* Header Section */}
-      <div className="border-t border-musica-burgundy/20 pt-4">
-        <button
-          onClick={() => setShowHeader(!showHeader)}
-          className="flex items-center justify-between w-full text-left"
-        >
-          <span className="text-musica-burgundy font-medium">Technical Details</span>
-          {showHeader ? (
-            <ChevronUp className="w-4 h-4 text-musica-burgundy/60" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-musica-burgundy/60" />
-          )}
-        </button>
-
-        {showHeader && (
-          <div className="mt-3 space-y-3">
-            <div className="bg-musica-cream/50 rounded-lg p-4 border border-musica-burgundy/10">
-              <div className="flex items-center justify-between mb-2">
-                <h5 className="text-musica-burgundy font-medium text-sm">Header</h5>
-                <button
-                  onClick={() => onCopy(JSON.stringify(decodedJWT.header, null, 2))}
-                  className="text-musica-gold hover:text-musica-gold/80 text-xs flex items-center space-x-1 transition-colors font-medium"
-                >
-                  <Copy className="w-3 h-3" />
-                  <span>Copy</span>
-                </button>
-              </div>
-              <pre className="text-musica-burgundy text-xs font-mono overflow-x-auto">
-                {JSON.stringify(decodedJWT.header, null, 2)}
-              </pre>
-            </div>
-
-            <div className="bg-musica-cream/50 rounded-lg p-4 border border-musica-burgundy/10">
-              <div className="flex items-center justify-between mb-2">
-                <h5 className="text-musica-burgundy font-medium text-sm">Raw Payload</h5>
-                <button
-                  onClick={() => onCopy(JSON.stringify(decodedJWT.payload, null, 2))}
-                  className="text-musica-gold hover:text-musica-gold/80 text-xs flex items-center space-x-1 transition-colors font-medium"
-                >
-                  <Copy className="w-3 h-3" />
-                  <span>Copy</span>
-                </button>
-              </div>
-              <pre className="text-musica-burgundy text-xs font-mono overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(decodedJWT.payload, null, 2)}
-              </pre>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
