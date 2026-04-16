@@ -43,6 +43,9 @@ interface CachedParticipant {
 }
 
 // Cache management utilities
+const AIRTABLE_WEBHOOK_URL =
+  "https://hooks.airtable.com/workflows/v1/genericWebhook/appH7hXqCqKE24Zw4/wfliXaNQamaUEebIv/wtraF9560Lbgn3I5J";
+
 const CACHE_KEY = "musicaLumina_verifiedParticipants";
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
 let lastScanTime = 0;
@@ -158,6 +161,13 @@ export async function verifyParticipantData(
     const participantResult = await tryVerifyAsParticipant(participantData);
     if (participantResult) {
       setCachedVerification(participantData, participantResult);
+
+      if (participantResult.isVerified) {
+        notifyAirtableWebhook(participantData).catch((err) =>
+          console.warn("Airtable webhook failed:", err)
+        );
+      }
+
       return participantResult;
     }
 
@@ -280,6 +290,28 @@ async function tryVerifyAsParticipant(
             .join(", ")}`,
         }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Airtable webhook
+// ---------------------------------------------------------------------------
+
+async function notifyAirtableWebhook(
+  participantData: ParticipantData
+): Promise<void> {
+  const res = await fetch(AIRTABLE_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      participant_name: participantData.name ?? "",
+      category: participantData.categoryName ?? "",
+      sub_category: participantData.subCategoryName ?? "",
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Webhook returned ${res.status}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
