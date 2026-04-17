@@ -68,7 +68,8 @@ function getCachedVerification(
       (item) =>
         item.id === participantId &&
         item.eventId === eventId &&
-        now - item.timestamp < CACHE_DURATION
+        now - item.timestamp < CACHE_DURATION &&
+        item.verificationResult.webhookSuccess === true
     );
 
     return match?.verificationResult ?? null;
