@@ -25,6 +25,7 @@ export interface VerificationResult {
   isVerified: boolean;
   error?: string;
   status?: "pending" | "verified" | "already_verified";
+  webhookSuccess?: boolean;
   matchedFields?: {
     name: boolean;
     songTitle: boolean;
@@ -160,14 +161,11 @@ export async function verifyParticipantData(
 
     const participantResult = await tryVerifyAsParticipant(participantData);
     if (participantResult) {
-      setCachedVerification(participantData, participantResult);
-
       if (participantResult.isVerified) {
-        notifyAirtableWebhook(participantData).catch((err) =>
-          console.warn("Airtable webhook failed:", err)
-        );
+        participantResult.webhookSuccess = await notifyAirtableWebhook(participantData);
       }
 
+      setCachedVerification(participantData, participantResult);
       return participantResult;
     }
 
@@ -298,19 +296,21 @@ async function tryVerifyAsParticipant(
 
 async function notifyAirtableWebhook(
   participantData: ParticipantData
-): Promise<void> {
-  const res = await fetch(AIRTABLE_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      participant_name: participantData.name ?? "",
-      category: participantData.categoryName ?? "",
-      sub_category: participantData.subCategoryName ?? "",
-    }),
-  });
+): Promise<boolean> {
+  try {
+    const res = await fetch(AIRTABLE_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        participant_name: participantData.name ?? "",
+        category: participantData.categoryName ?? "",
+        sub_category: participantData.subCategoryName ?? "",
+      }),
+    });
 
-  if (!res.ok) {
-    throw new Error(`Webhook returned ${res.status}`);
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 

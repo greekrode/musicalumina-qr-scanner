@@ -47,7 +47,7 @@ export default function JWTDecoder({ decodedJWT }: JWTDecoderProps) {
 
   if (!decodedJWT.isValid) {
     return (
-      <div className="bg-red-50/80 backdrop-blur-lg border border-red-200 rounded-2xl p-6 shadow-lg">
+      <div className="bg-red-50 border border-red-200 rounded-2xl p-6 shadow-lg">
         <div className="flex items-center space-x-3 mb-3">
           <Shield className="w-5 h-5 text-red-600" />
           <h3 className="text-red-700 font-semibold">Invalid JWT Token</h3>
@@ -63,10 +63,17 @@ export default function JWTDecoder({ decodedJWT }: JWTDecoderProps) {
   const mf = dbVerification?.matchedFields;
 
   return (
-    <div className="bg-musica-gold/10 backdrop-blur-lg border border-musica-gold/30 rounded-2xl p-6 space-y-4 shadow-lg">
+    <div className="bg-musica-cream border border-musica-gold/30 rounded-2xl p-6 space-y-4 shadow-lg">
       <div className="flex items-center space-x-3 mb-4">
         <Key className="w-5 h-5 text-musica-burgundy" />
         <h3 className="text-musica-burgundy font-semibold">QR Data</h3>
+        {isVerifying ? (
+          <Loader className="w-5 h-5 text-musica-burgundy/40 animate-spin" />
+        ) : dbVerification?.webhookSuccess === true ? (
+          <CheckCircle className="w-5 h-5 text-emerald-500" />
+        ) : dbVerification?.webhookSuccess === false ? (
+          <XCircle className="w-5 h-5 text-red-500" />
+        ) : null}
         {isExpired && (
           <span className="bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-medium border border-red-200">
             Expired
