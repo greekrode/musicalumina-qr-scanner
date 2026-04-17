@@ -44,9 +44,9 @@ interface CachedParticipant {
 }
 
 // Cache management utilities
-const AIRTABLE_WEBHOOK_URL = import.meta.env.VITE_AIRTABLE_WEBHOOK_URL as
-  | string
-  | undefined;
+// Same-origin proxy — Vite dev server (via proxy config) and Vercel
+// serverless fn (api/airtable-webhook.ts) both forward to Airtable.
+const AIRTABLE_WEBHOOK_URL = "/api/airtable-webhook";
 
 const CACHE_KEY = "musicaLumina_verifiedParticipants";
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
@@ -308,12 +308,6 @@ async function notifyAirtableWebhook(
   console.group("[Airtable Webhook]");
   console.log("URL:", AIRTABLE_WEBHOOK_URL);
   console.log("Payload:", payload);
-
-  if (!AIRTABLE_WEBHOOK_URL) {
-    console.error("VITE_AIRTABLE_WEBHOOK_URL is not set");
-    console.groupEnd();
-    return false;
-  }
 
   try {
     const startedAt = performance.now();
