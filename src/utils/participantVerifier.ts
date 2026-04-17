@@ -44,8 +44,9 @@ interface CachedParticipant {
 }
 
 // Cache management utilities
-const AIRTABLE_WEBHOOK_URL =
-  "https://hooks.airtable.com/workflows/v1/genericWebhook/appH7hXqCqKE24Zw4/wfliXaNQamaUEebIv/wtraF9560Lbgn3I5J";
+const AIRTABLE_WEBHOOK_URL = import.meta.env.VITE_AIRTABLE_WEBHOOK_URL as
+  | string
+  | undefined;
 
 const CACHE_KEY = "musicaLumina_verifiedParticipants";
 const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
@@ -297,19 +298,57 @@ async function tryVerifyAsParticipant(
 async function notifyAirtableWebhook(
   participantData: ParticipantData
 ): Promise<boolean> {
+  const payload = {
+    participant_name: participantData.name ?? "",
+    category: participantData.categoryName ?? "",
+    sub_category: participantData.subCategoryName ?? "",
+  };
+
+  console.group("[Airtable Webhook]");
+  console.log("URL:", AIRTABLE_WEBHOOK_URL);
+  console.log("Payload:", payload);
+
+  if (!AIRTABLE_WEBHOOK_URL) {
+    console.error("VITE_AIRTABLE_WEBHOOK_URL is not set");
+    console.groupEnd();
+    return false;
+  }
+
   try {
+    const startedAt = performance.now();
     const res = await fetch(AIRTABLE_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        participant_name: participantData.name ?? "",
-        category: participantData.categoryName ?? "",
-        sub_category: participantData.subCategoryName ?? "",
-      }),
+      body: JSON.stringify(payload),
     });
+    const elapsedMs = Math.round(performance.now() - startedAt);
 
+    console.log("Status:", res.status, res.statusText);
+    console.log("OK:", res.ok);
+    console.log("Duration:", `${elapsedMs}ms`);
+    console.log(
+      "Response headers:",
+      Object.fromEntries(res.headers.entries())
+    );
+
+    const bodyText = await res.text();
+    console.log("Response body (raw):", bodyText);
+    try {
+      console.log("Response body (json):", JSON.parse(bodyText));
+    } catch {
+      // body isn't JSON — already logged as text
+    }
+
+    console.groupEnd();
     return res.ok;
-  } catch {
+  } catch (error) {
+    console.error("Webhook request threw:", error);
+    if (error instanceof Error) {
+      console.error("Error name:", error.name);
+      console.error("Error message:", error.message);
+      console.error("Stack:", error.stack);
+    }
+    console.groupEnd();
     return false;
   }
 }

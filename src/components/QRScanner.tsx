@@ -45,6 +45,7 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
   });
   const pinchStartDistRef = useRef<number | null>(null);
   const pinchStartZoomRef = useRef<number>(1);
+  const hasScannedRef = useRef(false);
 
   // Update showHistory when prop changes
   useEffect(() => {
@@ -56,6 +57,14 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
       const scanner = new QrScanner(
         videoRef.current,
         async (result) => {
+          if (hasScannedRef.current) return;
+          hasScannedRef.current = true;
+
+          scanner.stop();
+          setIsScanning(false);
+          setZoomLevel(1);
+          setZoomCapabilities({ min: 1, max: 1, step: 0.1, supported: false });
+
           const scannedText = result.data;
           const isJWTToken = isJWT(scannedText);
           let decodedJWTData: DecodedJWT | undefined;
@@ -170,6 +179,7 @@ export default function QRScanner({ showHistoryProp = false }: QRScannerProps) {
 
     try {
       setError(null);
+      hasScannedRef.current = false;
       await qrScanner.start();
       setIsScanning(true);
 
