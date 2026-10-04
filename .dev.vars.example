@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `bun run dev:worker` (never commit .dev.vars).
+SUPABASE_SERVICE_ROLE_KEY=
+# Fresh secret; must match QR_PASS_SECRET in musicalumina-tools/.env.
+# Generate with: openssl rand -base64 32
+QR_PASS_SECRET=

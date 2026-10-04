@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "musicalumina-qr-scanner",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "routes": [{ "pattern": "qr.musicalumina.com", "custom_domain": true }],
+  "observability": { "enabled": true },
+  "vars": {
+    "CLERK_ISSUER": "https://clerk.musicalumina.com",
+    "CLERK_ALLOWED_ORG_ID": "org_REPLACE_ME",
+    "CLERK_AUTHORIZED_PARTIES": "https://qr.musicalumina.com",
+    "SUPABASE_URL": "https://gmkztaeonvcdrrmwxlnm.supabase.co"
+  }
+  // Secrets: wrangler secret put SUPABASE_SERVICE_ROLE_KEY / QR_PASS_SECRET
+}

@@ -1,3 +1,28 @@
+@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    color: var(--ink-body);
+    background: var(--surface-canvas);
+    line-height: var(--leading-body);
+  }
+  h1, h2, h3 { font-family: var(--font-serif); color: var(--ink-primary); font-weight: 500; letter-spacing: var(--tracking-headline); line-height: var(--leading-headline); }
+  button { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 2px solid var(--rule-focus); outline-offset: 2px; }
+  ::selection { background: var(--ml-marigold); color: var(--ml-burgundy); }
+}
+
+@layer components {
+  .type-label { font-size: var(--text-label); line-height: var(--leading-label); letter-spacing: var(--tracking-label); text-transform: uppercase; font-weight: 600; }
+  .btn { @apply inline-flex items-center justify-center gap-2 h-12 px-6 rounded-sm font-semibold text-[0.9375rem] transition-colors duration-200 ease-out-quart disabled:opacity-50; }
+  .btn-primary { @apply btn bg-marigold text-burgundy hover:bg-marigold-600; }
+  .btn-secondary { @apply btn bg-burgundy text-offWhite hover:bg-burgundy-600; }
+  .btn-outline { @apply btn border border-burgundy/30 text-burgundy hover:border-marigold hover:bg-marigold; }
+}

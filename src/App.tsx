@@ -1,22 +1,10 @@
-import React, { useState } from 'react';
-import QRScanner from './components/QRScanner';
-import AuthLayout from './components/AuthLayout';
+import AuthLayout from "./components/AuthLayout";
+import QRScanner from "./components/QRScanner";
 
-function App() {
-  const [showHistory, setShowHistory] = useState(false);
-
-  const handleHistoryToggle = () => {
-    setShowHistory(!showHistory);
-  };
-
+export default function App() {
   return (
-    <AuthLayout 
-      onHistoryToggle={handleHistoryToggle}
-      showHistoryButton={true}
-    >
-      <QRScanner showHistoryProp={showHistory} />
+    <AuthLayout>
+      <QRScanner />
     </AuthLayout>
   );
 }
-
-export default App;
