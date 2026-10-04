@@ -5,6 +5,7 @@ export type CheckinResult = {
   kind: "participant" | "teacher";
   checkedInAt: string;
   checkedInBy: string;
+  airtableSynced?: boolean; // set on first participant check-in when the webhook is configured
   registration: {
     id: string;
     name: string | null;

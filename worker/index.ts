@@ -14,7 +14,16 @@ export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string; // secret
   QR_PASS_SECRET: string; // secret, must match musicalumina-tools/.env
+  AIRTABLE_WEBHOOK_URL?: string; // optional secret
 }
+
+type CheckinResult = {
+  error?: string;
+  status?: "checked_in" | "already_checked_in";
+  kind?: "participant" | "teacher";
+  registration?: { id: string; name: string | null; categoryName: string | null; subCategoryName: string | null };
+  airtableSynced?: boolean;
+};
 
 const STAFF_ROLES = new Set(["admin", "staff"]);
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
@@ -67,8 +76,25 @@ async function checkin(request: Request, env: Env): Promise<Response> {
     console.error("check_in_pass failed", response.status, await response.text());
     return json({ error: "Check-in service unavailable. Try again." }, 502);
   }
-  const result = (await response.json()) as { error?: string };
+  const result = (await response.json()) as CheckinResult;
   if (result.error) return json({ error: "This registration is not eligible for check-in." }, 404);
+
+  // Airtable mirror: once per participant, on the first check-in only, so repeat
+  // scans never create duplicate rows. A failure is surfaced, not retried.
+  if (env.AIRTABLE_WEBHOOK_URL && result.status === "checked_in" && result.kind === "participant") {
+    result.airtableSynced = await fetch(env.AIRTABLE_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        participant_name: result.registration?.name ?? "",
+        category: result.registration?.categoryName ?? "",
+        sub_category: result.registration?.subCategoryName ?? "",
+      }),
+    })
+      .then((r) => r.ok)
+      .catch(() => false);
+    if (!result.airtableSynced) console.error("airtable webhook failed", result.registration?.id);
+  }
   return json(result);
 }
 
