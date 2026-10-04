@@ -8,7 +8,7 @@ separate backend.
 
 1. `musicalumina-tools/scripts/qr` mints a pass: `ML1:` + base32(kind, registration id, expiry, HMAC). It is 57 characters and renders as a version-4 QR (33×33 modules). The old JWT pass was about version 24.
 2. The scanner reads it (`qr-scanner`, native BarcodeDetector where the device has it) and posts it with the staff member's Clerk session token.
-3. The Worker verifies the Clerk token (RS256 against Clerk's JWKS, the allowed org, role `admin` or `staff`) and the pass HMAC, then makes one RPC call: `check_in_pass` (in `musicalumina-web/supabase/migrations`). That call records the check-in once per registration and kind, and returns the participant.
+3. The Worker verifies the Clerk token (RS256 against Clerk's JWKS, `metadata.role` = `admin` or `staff` from Clerk publicMetadata) and the pass HMAC, then makes one RPC call: `check_in_pass` (in `musicalumina-web/supabase/migrations`). That call records the check-in once per registration and kind, and returns the participant.
 
 ## Develop
 
@@ -22,6 +22,10 @@ bun test                          # pass codec + Worker auth tests
 ```
 
 ## Deploy
+
+Clerk needs the session-token claim `{ "metadata": "{{user.public_metadata}}" }`
+(Sessions → Customize session token) and staff users with public metadata
+`{ "role": "admin" }` or `{ "role": "staff" }`.
 
 Fill in the `vars` in `wrangler.jsonc`, then:
 

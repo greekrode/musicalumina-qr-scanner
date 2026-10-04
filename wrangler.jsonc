@@ -13,7 +13,6 @@
   "observability": { "enabled": true },
   "vars": {
     "CLERK_ISSUER": "https://clerk.musicalumina.com",
-    "CLERK_ALLOWED_ORG_ID": "org_REPLACE_ME",
     "CLERK_AUTHORIZED_PARTIES": "https://qr.musicalumina.com",
     "SUPABASE_URL": "https://gmkztaeonvcdrrmwxlnm.supabase.co"
   }

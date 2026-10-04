@@ -1,10 +1,11 @@
-import { SignInButton, UserButton, useAuth, useOrganizationList } from "@clerk/clerk-react";
+import { SignInButton, UserButton, useAuth, useUser } from "@clerk/clerk-react";
 import { Loader2, ShieldAlert } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
-// Must match STAFF_ROLES in worker/index.ts. The Worker is the real gate; this
-// only decides what to render.
-const STAFF_ROLES = new Set(["org:admin", "org:staff"]);
+// Must match isStaffRole in worker/index.ts. The Worker is the real gate; this
+// only decides what to render. Role = Clerk publicMetadata.role.
+const STAFF_ROLES = new Set(["admin", "staff"]);
+const isStaffRole = (role: unknown) => typeof role === "string" && STAFF_ROLES.has(role.replace(/^org:/, ""));
 
 function Eyebrow({ children }: { children: ReactNode }) {
   return (
@@ -28,20 +29,10 @@ function StateCard({ eyebrow, title, children }: { eyebrow: string; title: strin
 }
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn, orgRole, signOut } = useAuth();
-  const { isLoaded: orgsLoaded, userMemberships, setActive } = useOrganizationList({ userMemberships: true });
-  const isStaff = STAFF_ROLES.has(orgRole ?? "");
-  const staffMembership = userMemberships.data?.find((m) => STAFF_ROLES.has(m.role));
-
-  // The Worker reads the *active* organization from the session token. Staff who
-  // signed in without one selected would be rejected, so pick their staff org.
-  useEffect(() => {
-    if (isSignedIn && !isStaff && staffMembership && setActive) {
-      void setActive({ organization: staffMembership.organization.id });
-    }
-  }, [isSignedIn, isStaff, staffMembership, setActive]);
-
-  const resolving = !isLoaded || (isSignedIn && !isStaff && (!orgsLoaded || userMemberships.isLoading || staffMembership));
+  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { user } = useUser();
+  const isStaff = isStaffRole(user?.publicMetadata?.role);
+  const resolving = !isLoaded || (isSignedIn && !user);
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-surface-canvas">
@@ -70,7 +61,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       ) : !isStaff ? (
         <StateCard eyebrow="Access denied" title="Not authorised.">
           <ShieldAlert className="mx-auto mb-3 h-6 w-6 text-status-error-fg" aria-hidden />
-          <p>This account has no admin or staff role in the Musica Lumina organization. Ask an admin to invite you.</p>
+          <p>This account has no admin or staff role. Ask an admin to grant you access.</p>
           <button className="btn-outline mt-8 w-full" onClick={() => signOut()}>
             Sign out
           </button>

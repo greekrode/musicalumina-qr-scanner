@@ -9,7 +9,6 @@ import { decodePass } from "./pass";
 export interface Env {
   ASSETS: Fetcher;
   CLERK_ISSUER: string; // e.g. https://clerk.musicalumina.com
-  CLERK_ALLOWED_ORG_ID: string;
   CLERK_AUTHORIZED_PARTIES: string; // comma-separated origins
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string; // secret
@@ -25,7 +24,11 @@ type CheckinResult = {
   airtableSynced?: boolean;
 };
 
+// Must match isStaffRole in src/components/AuthLayout.tsx and public.is_staff().
+// Accepts the legacy "org:admin" spelling some accounts may still carry.
 const STAFF_ROLES = new Set(["admin", "staff"]);
+const isStaffRole = (role: unknown) =>
+  typeof role === "string" && STAFF_ROLES.has(role.replace(/^org:/, ""));
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 
 function json(body: unknown, status = 200): Response {
@@ -40,9 +43,9 @@ async function staffUserId(request: Request, env: Env): Promise<string | null> {
     const { payload } = await jwtVerify(token, jwks, { issuer: env.CLERK_ISSUER, algorithms: ["RS256"] });
     const parties = env.CLERK_AUTHORIZED_PARTIES.split(",").map((p) => p.trim()).filter(Boolean);
     if (!parties.includes(String(payload.azp))) return null; // empty config fails closed
-    // Clerk session token v2: active organization lives in `o` ({ id, rol }).
-    const org = payload.o as { id?: string; rol?: string } | undefined;
-    if (org?.id !== env.CLERK_ALLOWED_ORG_ID || !STAFF_ROLES.has(org.rol ?? "")) return null;
+    // Role lives in Clerk publicMetadata (backend-writable only), exposed by the
+    // session-token template `{ "metadata": "{{user.public_metadata}}" }`.
+    if (!isStaffRole((payload.metadata as { role?: unknown } | undefined)?.role)) return null;
     return typeof payload.sub === "string" ? payload.sub : null;
   } catch {
     return null;
