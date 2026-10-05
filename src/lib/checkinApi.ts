@@ -7,12 +7,14 @@ export type CheckinResult = {
   eventDays?: string[];
   /** Signed id and reference code both matched the database. */
   verified?: boolean;
-  kind: "participant" | "teacher";
+  kind: "participant" | "teacher" | "performer";
   checkedInAt: string | null;
   checkedInBy: string;
   registration: {
     id: string;
     name: string | null;
+    /** Performer passes: the group entry they perform in (e.g. the duet). */
+    entryName?: string | null;
     songTitle: string | null;
     categoryName: string | null;
     subCategoryName: string | null;

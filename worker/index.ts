@@ -82,7 +82,13 @@ async function checkin(request: Request, env: Env): Promise<Response> {
         "Content-Type": "application/json",
       },
       // The RPC refuses the scan unless the signed reference code matches the DB.
-      body: JSON.stringify({ p_registration_id: pass.registrationId, p_kind: pass.kind, p_checked_in_by: userId, p_ref_code: pass.refCode }),
+      body: JSON.stringify({
+        p_registration_id: pass.registrationId,
+        // A group entry checks in each performer separately.
+        p_kind: "performer" in pass ? `performer:${pass.performer}` : pass.kind,
+        p_checked_in_by: userId,
+        p_ref_code: pass.refCode,
+      }),
       signal: AbortSignal.timeout(7000),
     });
   } catch (error) {

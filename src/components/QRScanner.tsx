@@ -279,6 +279,7 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
   const { result } = scan;
   const reg = result.registration;
   const details = [
+    ["Entry", reg.entryName],
     ["Category", reg.categoryName],
     ["Sub-category", reg.subCategoryName],
     ["Piece", reg.songTitle],
@@ -311,6 +312,7 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
         )}
         <div className="mt-3 flex flex-wrap gap-2">
           {result.kind === "teacher" && <span className={`type-label px-2 py-1 ${style.bg} text-burgundy`}>Teacher</span>}
+          {result.kind === "performer" && <span className={`type-label px-2 py-1 ${style.bg} text-burgundy`}>Performer</span>}
           {result.verified && (
             <span
               className="type-label inline-flex items-center gap-1 bg-status-open-bg px-2 py-1 text-status-open-fg"

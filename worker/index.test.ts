@@ -68,3 +68,13 @@ test("refuses a pass whose reference code no longer matches the database", async
   expect(res.status).toBe(422);
   expect(((await res.json()) as { error: string }).error).toMatch(/does not match/);
 });
+
+test("a performer pass checks in that performer", async () => {
+  rpcResult = { status: "checked_in", kind: "performer", registration: { name: "Cherry" } };
+  const performerPass = await encodePass("pass-secret", {
+    kind: "performer", registrationId: "366dc7b3-f0fd-445f-9bfe-ad520a134928", expiresAt: Math.floor(Date.now() / 1000) + 60,
+    refCode: "4928-3456", performer: 1,
+  });
+  expect((await call(await session({ role: "reg_staff" }), { pass: performerPass })).status).toBe(200);
+  expect(rpcCalls.at(-1)).toMatchObject({ p_kind: "performer:1" });
+});
