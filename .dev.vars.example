@@ -3,7 +3,3 @@ SUPABASE_SERVICE_ROLE_KEY=
 # Fresh secret; must match QR_PASS_SECRET in musicalumina-tools/.env.
 # Generate with: openssl rand -base64 32
 QR_PASS_SECRET=
-
-# Optional Worker secret (wrangler secret put / .dev.vars): Airtable workflow
-# webhook called once per first participant check-in.
-# AIRTABLE_WEBHOOK_URL=https://hooks.airtable.com/workflows/v1/genericWebhook/...

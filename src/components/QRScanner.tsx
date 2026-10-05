@@ -283,9 +283,6 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
         <h2 className="mt-4 text-[clamp(1.5rem,1.2rem+1.5vw,2rem)]">{reg.name ?? "Unnamed registration"}</h2>
         <div className="mt-3 flex flex-wrap gap-2">
           {result.kind === "teacher" && <span className={`type-label px-2 py-1 ${style.bg} text-burgundy`}>Teacher</span>}
-          {result.airtableSynced === false && (
-            <span className="type-label bg-status-error-bg px-2 py-1 text-status-error-fg">Airtable sync failed</span>
-          )}
           {reg.registrationStatus !== "verified" && (
             <span className="type-label bg-status-upcoming-bg px-2 py-1 text-status-upcoming-fg">Payment {reg.registrationStatus}</span>
           )}

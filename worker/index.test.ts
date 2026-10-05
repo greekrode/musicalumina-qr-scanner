@@ -12,20 +12,14 @@ const env = {
   SUPABASE_URL: "https://db.test",
   SUPABASE_SERVICE_ROLE_KEY: "service",
   QR_PASS_SECRET: "pass-secret",
-  AIRTABLE_WEBHOOK_URL: "https://hooks.airtable.test/wh",
 } as unknown as Env;
 
 let rpcResult: unknown = { status: "checked_in", registration: { name: "Kid A" } };
 const rpcCalls: unknown[] = [];
-const airtableCalls: unknown[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.endsWith("/.well-known/jwks.json")) return Response.json({ keys: [jwk] });
-  if (url === "https://hooks.airtable.test/wh") {
-    airtableCalls.push(JSON.parse(String(init?.body)));
-    return new Response("ok");
-  }
   if (url === "https://db.test/rest/v1/rpc/check_in_pass") {
     rpcCalls.push(JSON.parse(String(init?.body)));
     return Response.json(rpcResult);
@@ -64,19 +58,4 @@ test("rejects forged passes and ineligible registrations", async () => {
   expect((await call(token, { pass: pass.slice(0, -2) + "AA" })).status).toBe(422);
   rpcResult = { error: "not_eligible" };
   expect((await call(token, { pass })).status).toBe(404);
-});
-
-test("mirrors only the first participant check-in to Airtable", async () => {
-  const token = await session({ role: "staff" });
-  const registration = { id: "r1", name: "Kid A", categoryName: "Piano", subCategoryName: "Junior" };
-  airtableCalls.length = 0;
-  rpcResult = { status: "checked_in", kind: "participant", registration };
-  const first = (await (await call(token, { pass })).json()) as { airtableSynced?: boolean };
-  expect(first.airtableSynced).toBe(true);
-  expect(airtableCalls).toEqual([{ participant_name: "Kid A", category: "Piano", sub_category: "Junior" }]);
-  rpcResult = { status: "already_checked_in", kind: "participant", registration };
-  await call(token, { pass });
-  rpcResult = { status: "checked_in", kind: "teacher", registration };
-  await call(token, { pass });
-  expect(airtableCalls).toHaveLength(1);
 });
