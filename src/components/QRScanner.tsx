@@ -10,27 +10,34 @@ type Scan =
   | { id: number; phase: "error"; message: string };
 
 type Finished = Exclude<Scan, { phase: "verifying" }>;
-type Tone = "ok" | "repeat" | "error";
+type Tone = "ok" | "repeat" | "test" | "error";
 
 // qr-scanner reports the same code on every frame; ignore repeats for this long.
 const DUPLICATE_WINDOW_MS = 3000;
 const HISTORY_LIMIT = 50;
 
 const toneOf = (scan: Scan): Tone | null =>
-  scan.phase === "error" ? "error" : scan.phase === "done" ? (scan.result.status === "checked_in" ? "ok" : "repeat") : null;
+  scan.phase === "error"
+    ? "error"
+    : scan.phase === "done"
+      ? ({ checked_in: "ok", already_checked_in: "repeat", test: "test" } as const)[scan.result.status]
+      : null;
 
 const TONE_STYLE: Record<Tone, { bar: string; text: string; bg: string; label: string }> = {
   ok: { bar: "bg-status-open-fg", text: "text-status-open-fg", bg: "bg-status-open-bg", label: "Checked in" },
   repeat: { bar: "bg-marigold", text: "text-status-upcoming-fg", bg: "bg-status-upcoming-bg", label: "Already checked in" },
+  test: { bar: "bg-burgundy-100", text: "text-ink-muted", bg: "bg-burgundy-50", label: "Test scan · not recorded" },
   error: { bar: "bg-status-error-fg", text: "text-status-error-fg", bg: "bg-status-error-bg", label: "Not accepted" },
 };
 
+const dayOf = (day: string) =>
+  new Date(`${day}T00:00:00+07:00`).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 function feedback(audio: AudioContext | null, tone: Tone) {
-  navigator.vibrate?.(tone === "ok" ? 60 : tone === "repeat" ? [60, 80, 60] : 300);
+  navigator.vibrate?.(tone === "ok" || tone === "test" ? 60 : tone === "repeat" ? [60, 80, 60] : 300);
   if (!audio) return;
-  const notes = tone === "ok" ? [880] : tone === "repeat" ? [660, 660] : [220];
+  const notes = tone === "ok" ? [880] : tone === "test" ? [520] : tone === "repeat" ? [660, 660] : [220];
   notes.forEach((frequency, i) => {
     const osc = audio.createOscillator();
     const gain = audio.createGain();
@@ -274,13 +281,21 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
           <span className={`type-label inline-flex items-center gap-2 whitespace-nowrap ${style.text}`}>
             <CheckCircle2 className="h-4 w-4" aria-hidden /> {style.label}
           </span>
-          <span className="type-label whitespace-nowrap text-ink-subtle">
-            {result.status === "already_checked_in" && "First in "}
-            {timeOf(result.checkedInAt)}
-            {result.status === "already_checked_in" && result.checkedInBy === userId && " · by you"}
-          </span>
+          {result.checkedInAt && (
+            <span className="type-label whitespace-nowrap text-ink-subtle">
+              {result.status !== "checked_in" && "First in "}
+              {timeOf(result.checkedInAt)}
+              {result.status !== "checked_in" && result.checkedInBy === userId && " · by you"}
+            </span>
+          )}
         </div>
         <h2 className="mt-4 text-[clamp(1.5rem,1.2rem+1.5vw,2rem)]">{reg.name ?? "Unnamed registration"}</h2>
+        {result.status === "test" && (
+          <p className="mt-2 text-[0.875rem] text-ink-muted">
+            The pass is valid, but today is not an event day, so nothing was recorded.
+            {result.eventDays?.length ? ` Check-in opens on ${result.eventDays.map(dayOf).join(", ")}.` : ""}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           {result.kind === "teacher" && <span className={`type-label px-2 py-1 ${style.bg} text-burgundy`}>Teacher</span>}
           {reg.registrationStatus !== "verified" && (

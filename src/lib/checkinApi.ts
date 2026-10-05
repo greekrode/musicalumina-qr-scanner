@@ -1,9 +1,12 @@
 export const PASS_PREFIX = "ML1:";
 
 export type CheckinResult = {
-  status: "checked_in" | "already_checked_in";
+  /** "test": scanned outside the event's days; verified but nothing recorded. */
+  status: "checked_in" | "already_checked_in" | "test";
+  /** Event days (YYYY-MM-DD, Jakarta) — shown on test scans. */
+  eventDays?: string[];
   kind: "participant" | "teacher";
-  checkedInAt: string;
+  checkedInAt: string | null;
   checkedInBy: string;
   registration: {
     id: string;
