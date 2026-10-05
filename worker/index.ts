@@ -64,13 +64,15 @@ async function checkin(request: Request, env: Env): Promise<Response> {
       Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ p_registration_id: pass.registrationId, p_kind: pass.kind, p_checked_in_by: userId }),
+    // The RPC refuses the scan unless the signed reference code matches the DB.
+    body: JSON.stringify({ p_registration_id: pass.registrationId, p_kind: pass.kind, p_checked_in_by: userId, p_ref_code: pass.refCode }),
   });
   if (!response.ok) {
     console.error("check_in_pass failed", response.status, await response.text());
     return json({ error: "Check-in service unavailable. Try again." }, 502);
   }
   const result = (await response.json()) as { error?: string };
+  if (result.error === "mismatch") return json({ error: "QR data does not match the registration record." }, 422);
   if (result.error) return json({ error: "This registration is not eligible for check-in." }, 404);
 
   return json(result);

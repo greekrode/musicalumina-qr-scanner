@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/clerk-react";
-import { Camera, CheckCircle2, AlertCircle, Flashlight, FlashlightOff, History, Loader2, RotateCcw, Square } from "lucide-react";
+import { Camera, CheckCircle2, AlertCircle, Flashlight, FlashlightOff, History, Loader2, RotateCcw, ShieldCheck, Square } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { useEffect, useRef, useState } from "react";
 import { checkInPass, PASS_PREFIX, type CheckinResult } from "../lib/checkinApi";
@@ -271,6 +271,8 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
     ["Category", reg.categoryName],
     ["Sub-category", reg.subCategoryName],
     ["Piece", reg.songTitle],
+    ["Reference", reg.refCode],
+    ["Registration ID", reg.id],
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return (
@@ -298,8 +300,13 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
         )}
         <div className="mt-3 flex flex-wrap gap-2">
           {result.kind === "teacher" && <span className={`type-label px-2 py-1 ${style.bg} text-burgundy`}>Teacher</span>}
-          {reg.registrationStatus !== "verified" && (
-            <span className="type-label bg-status-upcoming-bg px-2 py-1 text-status-upcoming-fg">Payment {reg.registrationStatus}</span>
+          {result.verified && (
+            <span
+              className="type-label inline-flex items-center gap-1 bg-status-open-bg px-2 py-1 text-status-open-fg"
+              title="The pass signature, registration ID and reference code all match the database"
+            >
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Verified
+            </span>
           )}
         </div>
         {details.length > 0 && (
@@ -307,7 +314,7 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
             {details.map(([label, value]) => (
               <div key={label} className="flex justify-between gap-4 py-3">
                 <dt className="type-label pt-1 text-ink-muted">{label}</dt>
-                <dd className="text-right text-[0.9375rem] text-ink-primary">{value}</dd>
+                <dd className={`text-right text-[0.9375rem] text-ink-primary ${label === "Registration ID" ? "break-all font-mono text-[0.75rem]" : ""}`}>{value}</dd>
               </div>
             ))}
           </dl>

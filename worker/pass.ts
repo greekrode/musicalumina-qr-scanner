@@ -2,21 +2,23 @@
 // (musicalumina-tools/scripts/qr/pass.ts — keep both in sync; the test
 // vector in pass.test.ts pins the wire format).
 //
-//   "ML1:" + base32( kind(1) | registrationId(16) | exp u32 BE(4) | hmac-sha256[0..12] )
+//   "ML2:" + base32( kind(1) | registrationId(16) | exp u32 BE(4) | refCode ASCII(0-20) | hmac-sha256[0..12] )
 //
-// 57 characters, all in the QR alphanumeric set, so it fits a version-4 QR
-// at ECC level Q (33x33 modules). The old JWT pass needed ~version 20.
-// The registration id is the only claim: the server reads everything else
-// from the database, so a printed pass never goes stale.
+// ~73 characters, all in the QR alphanumeric set: a version-5 QR at ECC Q
+// (37x37 modules). The old JWT pass needed ~version 20. The server checks the
+// signature, then that the registration id and reference code both match the
+// database before checking anyone in.
 
-export const PASS_PREFIX = "ML1:";
+export const PASS_PREFIX = "ML2:";
 export type PassKind = "participant" | "teacher";
 
 const KIND_BYTE: Record<PassKind, number> = { participant: 1, teacher: 2 };
 const BYTE_KIND: Record<number, PassKind> = { 1: "participant", 2: "teacher" };
-const BODY_LEN = 21;
+const FIXED_LEN = 21; // kind + id + exp
+const MAX_REF_LEN = 20;
 const MAC_LEN = 12; // 96-bit tag; every check is online and rate-bound by staff scanning.
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const REF_PATTERN = /^[A-Za-z0-9-]*$/;
 
 function base32Encode(bytes: Uint8Array): string {
   let out = "";
@@ -77,31 +79,41 @@ async function mac(secret: string, body: Uint8Array<ArrayBuffer>): Promise<Uint8
 
 export async function encodePass(
   secret: string,
-  pass: { kind: PassKind; registrationId: string; expiresAt: number },
+  pass: { kind: PassKind; registrationId: string; expiresAt: number; refCode: string },
 ): Promise<string> {
-  const body = new Uint8Array(BODY_LEN);
+  if (pass.refCode.length > MAX_REF_LEN || !REF_PATTERN.test(pass.refCode)) {
+    throw new Error(`Invalid reference code: ${pass.refCode}`);
+  }
+  const ref = new TextEncoder().encode(pass.refCode);
+  const body = new Uint8Array(FIXED_LEN + ref.length);
   body[0] = KIND_BYTE[pass.kind];
   body.set(uuidToBytes(pass.registrationId), 1);
   new DataView(body.buffer).setUint32(17, pass.expiresAt);
+  body.set(ref, FIXED_LEN);
   const tag = await mac(secret, body);
-  const token = new Uint8Array(BODY_LEN + MAC_LEN);
+  const token = new Uint8Array(body.length + MAC_LEN);
   token.set(body);
-  token.set(tag, BODY_LEN);
+  token.set(tag, body.length);
   return PASS_PREFIX + base32Encode(token);
 }
 
 export async function decodePass(secret: string, text: string, now = Date.now() / 1000) {
   if (!text.startsWith(PASS_PREFIX)) throw new Error("Not a Musica Lumina pass");
   const token = base32Decode(text.slice(PASS_PREFIX.length));
-  if (token.length !== BODY_LEN + MAC_LEN) throw new Error("Invalid pass length");
-  const body = token.slice(0, BODY_LEN);
+  if (token.length < FIXED_LEN + MAC_LEN || token.length > FIXED_LEN + MAX_REF_LEN + MAC_LEN) {
+    throw new Error("Invalid pass length");
+  }
+  const bodyLen = token.length - MAC_LEN;
+  const body = token.slice(0, bodyLen);
   const expected = await mac(secret, body);
   let diff = 0;
-  for (let i = 0; i < MAC_LEN; i++) diff |= expected[i] ^ token[BODY_LEN + i];
+  for (let i = 0; i < MAC_LEN; i++) diff |= expected[i] ^ token[bodyLen + i];
   if (diff !== 0) throw new Error("Pass signature is invalid");
   const kind = BYTE_KIND[body[0]];
   if (!kind) throw new Error("Unknown pass kind");
   const expiresAt = new DataView(body.buffer).getUint32(17);
   if (now >= expiresAt) throw new Error("Pass has expired");
-  return { kind, registrationId: bytesToUuid(body.slice(1, 17)), expiresAt };
+  const refCode = new TextDecoder().decode(body.slice(FIXED_LEN));
+  if (!REF_PATTERN.test(refCode)) throw new Error("Invalid reference code");
+  return { kind, registrationId: bytesToUuid(body.slice(1, 17)), expiresAt, refCode };
 }

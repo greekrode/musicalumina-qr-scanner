@@ -32,7 +32,7 @@ const session = (metadata: object, azp = "https://scanner.test") =>
   new SignJWT({ metadata, azp }).setProtectedHeader({ alg: "RS256", kid: "k1" }).setSubject("user_1")
     .setIssuer("https://clerk.test").setExpirationTime("1m").sign(privateKey);
 const pass = await encodePass("pass-secret", {
-  kind: "participant", registrationId: "366dc7b3-f0fd-445f-9bfe-ad520a134928", expiresAt: Math.floor(Date.now() / 1000) + 60,
+  kind: "participant", registrationId: "366dc7b3-f0fd-445f-9bfe-ad520a134928", expiresAt: Math.floor(Date.now() / 1000) + 60, refCode: "4928-3456",
 });
 const call = async (token: string, body: unknown) =>
   worker.fetch(new Request("https://scanner.test/api/checkin", {
@@ -42,7 +42,7 @@ const call = async (token: string, body: unknown) =>
 test("staff session + valid pass checks in via one RPC", async () => {
   const res = await call(await session({ role: "reg_staff" }), { pass });
   expect(res.status).toBe(200);
-  expect(rpcCalls.at(-1)).toEqual({ p_registration_id: "366dc7b3-f0fd-445f-9bfe-ad520a134928", p_kind: "participant", p_checked_in_by: "user_1" });
+  expect(rpcCalls.at(-1)).toEqual({ p_registration_id: "366dc7b3-f0fd-445f-9bfe-ad520a134928", p_kind: "participant", p_checked_in_by: "user_1", p_ref_code: "4928-3456" });
 });
 
 test("rejects missing role, wrong role, wrong app, bad token", async () => {
@@ -60,4 +60,11 @@ test("rejects forged passes and ineligible registrations", async () => {
   expect((await call(token, { pass: pass.slice(0, -2) + "AA" })).status).toBe(422);
   rpcResult = { error: "not_eligible" };
   expect((await call(token, { pass })).status).toBe(404);
+});
+
+test("refuses a pass whose reference code no longer matches the database", async () => {
+  rpcResult = { error: "mismatch" };
+  const res = await call(await session({ role: "reg_staff" }), { pass });
+  expect(res.status).toBe(422);
+  expect(((await res.json()) as { error: string }).error).toMatch(/does not match/);
 });

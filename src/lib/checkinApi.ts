@@ -1,10 +1,12 @@
-export const PASS_PREFIX = "ML1:";
+export const PASS_PREFIX = "ML2:";
 
 export type CheckinResult = {
   /** "test": scanned outside the event's days; verified but nothing recorded. */
   status: "checked_in" | "already_checked_in" | "test";
   /** Event days (YYYY-MM-DD, Jakarta) — shown on test scans. */
   eventDays?: string[];
+  /** Signed id and reference code both matched the database. */
+  verified?: boolean;
   kind: "participant" | "teacher";
   checkedInAt: string | null;
   checkedInBy: string;
@@ -14,7 +16,7 @@ export type CheckinResult = {
     songTitle: string | null;
     categoryName: string | null;
     subCategoryName: string | null;
-    registrationStatus: string;
+    refCode: string | null;
   };
 };
 
