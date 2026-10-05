@@ -40,7 +40,7 @@ const call = async (token: string, body: unknown) =>
   }), env);
 
 test("staff session + valid pass checks in via one RPC", async () => {
-  const res = await call(await session({ role: "staff" }), { pass });
+  const res = await call(await session({ role: "reg_staff" }), { pass });
   expect(res.status).toBe(200);
   expect(rpcCalls.at(-1)).toEqual({ p_registration_id: "366dc7b3-f0fd-445f-9bfe-ad520a134928", p_kind: "participant", p_checked_in_by: "user_1" });
 });
@@ -48,6 +48,8 @@ test("staff session + valid pass checks in via one RPC", async () => {
 test("rejects missing role, wrong role, wrong app, bad token", async () => {
   expect((await call(await session({}), { pass })).status).toBe(401);
   expect((await call(await session({ role: "member" }), { pass })).status).toBe(401);
+  expect((await call(await session({ role: "staff" }), { pass })).status).toBe(401); // web-admin role
+  expect((await call(await session({ role: "score_staff" }), { pass })).status).toBe(401);
   expect((await call(await session({ role: "admin" }, "https://evil.test"), { pass })).status).toBe(401);
   expect((await call("garbage", { pass })).status).toBe(401);
   expect((await call(await session({ role: "org:admin" }), { pass })).status).toBe(200); // legacy spelling

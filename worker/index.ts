@@ -15,9 +15,9 @@ export interface Env {
   QR_PASS_SECRET: string; // secret, must match musicalumina-tools/.env
 }
 
-// Must match isStaffRole in src/components/AuthLayout.tsx and public.is_staff().
+// QR check-in roles: admin and reg_staff. Must match src/components/AuthLayout.tsx.
 // Accepts the legacy "org:admin" spelling some accounts may still carry.
-const STAFF_ROLES = new Set(["admin", "staff"]);
+const STAFF_ROLES = new Set(["admin", "reg_staff"]);
 const isStaffRole = (role: unknown) =>
   typeof role === "string" && STAFF_ROLES.has(role.replace(/^org:/, ""));
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;

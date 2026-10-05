@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 // Must match isStaffRole in worker/index.ts. The Worker is the real gate; this
 // only decides what to render. Role = Clerk publicMetadata.role.
-const STAFF_ROLES = new Set(["admin", "staff"]);
+const STAFF_ROLES = new Set(["admin", "reg_staff"]);
 const isStaffRole = (role: unknown) => typeof role === "string" && STAFF_ROLES.has(role.replace(/^org:/, ""));
 
 function Eyebrow({ children }: { children: ReactNode }) {
@@ -61,7 +61,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       ) : !isStaff ? (
         <StateCard eyebrow="Access denied" title="Not authorised.">
           <ShieldAlert className="mx-auto mb-3 h-6 w-6 text-status-error-fg" aria-hidden />
-          <p>This account has no admin or staff role. Ask an admin to grant you access.</p>
+          <p>This account has no check-in role (reg_staff). Ask an admin to grant you access.</p>
           <button className="btn-outline mt-8 w-full" onClick={() => signOut()}>
             Sign out
           </button>
