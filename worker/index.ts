@@ -3,7 +3,7 @@
 //
 // One scan = verify staff Clerk session (cached JWKS) + verify pass HMAC
 // (local) + one Supabase RPC that checks in and returns the participant.
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, errors, jwtVerify } from "jose";
 import { decodePass } from "./pass";
 
 export interface Env {
@@ -22,6 +22,14 @@ const isStaffRole = (role: unknown) =>
   typeof role === "string" && STAFF_ROLES.has(role.replace(/^org:/, ""));
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 
+// Problems with the token itself. Anything else (Clerk key endpoint down or
+// slow, network) is not the staff member's fault, so it must not say "sign in again".
+const AUTH_FAILURES = [
+  errors.JWTExpired, errors.JWTClaimValidationFailed, errors.JWTInvalid, errors.JWSInvalid,
+  errors.JWSSignatureVerificationFailed, errors.JWKSNoMatchingKey, errors.JWKSMultipleMatchingKeys, errors.JOSEAlgNotAllowed,
+];
+class VerifierUnavailable extends Error {}
+
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
@@ -38,13 +46,20 @@ async function staffUserId(request: Request, env: Env): Promise<string | null> {
     // session-token template `{ "metadata": "{{user.public_metadata}}" }`.
     if (!isStaffRole((payload.metadata as { role?: unknown } | undefined)?.role)) return null;
     return typeof payload.sub === "string" ? payload.sub : null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (AUTH_FAILURES.some((E) => error instanceof E)) return null;
+    throw new VerifierUnavailable(String(error));
   }
 }
 
 async function checkin(request: Request, env: Env): Promise<Response> {
-  const userId = await staffUserId(request, env);
+  let userId: string | null;
+  try {
+    userId = await staffUserId(request, env);
+  } catch (error) {
+    console.error("session verification unavailable", error);
+    return json({ error: "Could not verify your session right now. Try again in a moment." }, 503);
+  }
   if (!userId) return json({ error: "Your session is not allowed to check in passes. Sign in again." }, 401);
 
   const body = (await request.json().catch(() => null)) as { pass?: unknown } | null;
@@ -57,16 +72,23 @@ async function checkin(request: Request, env: Env): Promise<Response> {
     return json({ error: error instanceof Error ? error.message : "Invalid pass" }, 422);
   }
 
-  const response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/check_in_pass`, {
-    method: "POST",
-    headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-    },
-    // The RPC refuses the scan unless the signed reference code matches the DB.
-    body: JSON.stringify({ p_registration_id: pass.registrationId, p_kind: pass.kind, p_checked_in_by: userId, p_ref_code: pass.refCode }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/check_in_pass`, {
+      method: "POST",
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      // The RPC refuses the scan unless the signed reference code matches the DB.
+      body: JSON.stringify({ p_registration_id: pass.registrationId, p_kind: pass.kind, p_checked_in_by: userId, p_ref_code: pass.refCode }),
+      signal: AbortSignal.timeout(7000),
+    });
+  } catch (error) {
+    console.error("check_in_pass unreachable", error);
+    return json({ error: "Check-in service unavailable. Try again." }, 503);
+  }
   if (!response.ok) {
     console.error("check_in_pass failed", response.status, await response.text());
     return json({ error: "Check-in service unavailable. Try again." }, 502);

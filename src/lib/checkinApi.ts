@@ -20,13 +20,22 @@ export type CheckinResult = {
   };
 };
 
+export const NO_CONNECTION = "No connection. Check Wi-Fi and scan again.";
+
 export async function checkInPass(pass: string, sessionToken: string | null): Promise<CheckinResult> {
   if (!sessionToken) throw new Error("Your session expired. Sign in again.");
-  const response = await fetch("/api/checkin", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ pass }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("/api/checkin", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ pass }),
+      // Venue Wi-Fi: never leave a scan hanging on "Verifying".
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch {
+    throw new Error(NO_CONNECTION);
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "Check-in failed. Try again.");
   return body as CheckinResult;

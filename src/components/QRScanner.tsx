@@ -2,7 +2,7 @@ import { useAuth } from "@clerk/clerk-react";
 import { Camera, CheckCircle2, AlertCircle, Flashlight, FlashlightOff, History, Loader2, RotateCcw, ShieldCheck, Square } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { useEffect, useRef, useState } from "react";
-import { checkInPass, PASS_PREFIX, type CheckinResult } from "../lib/checkinApi";
+import { checkInPass, NO_CONNECTION, PASS_PREFIX, type CheckinResult } from "../lib/checkinApi";
 
 type Scan =
   | { id: number; phase: "verifying" }
@@ -58,6 +58,9 @@ export default function QRScanner() {
   const audioRef = useRef<AudioContext | null>(null);
   const recentRef = useRef(new Map<string, number>());
   const sequenceRef = useRef(0);
+  // Passes with a request in flight: ignore re-reads until it settles, so a slow
+  // response cannot be overtaken by a second request for the same pass.
+  const inflightRef = useRef(new Set<string>());
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
 
@@ -84,7 +87,7 @@ export default function QRScanner() {
         const text = data.trim();
         const now = Date.now();
         const last = recentRef.current.get(text);
-        if (!text || (last && now - last < DUPLICATE_WINDOW_MS)) return;
+        if (!text || inflightRef.current.has(text) || (last && now - last < DUPLICATE_WINDOW_MS)) return;
         recentRef.current.set(text, now);
 
         const id = ++sequenceRef.current;
@@ -93,13 +96,21 @@ export default function QRScanner() {
           return;
         }
         setCurrent({ id, phase: "verifying" });
+        inflightRef.current.add(text);
         try {
-          const result = await checkInPass(text, await getTokenRef.current());
+          // Clerk refreshes the token over the network; offline that throws.
+          const token = await getTokenRef.current().catch(() => {
+            throw new Error(NO_CONNECTION);
+          });
+          const result = await checkInPass(text, token);
           record({ id, phase: "done", result });
+          recentRef.current.set(text, Date.now()); // duplicate window starts when the answer arrives
         } catch (error) {
           // Let staff retry the same pass immediately after a failure.
           recentRef.current.delete(text);
           record({ id, phase: "error", message: error instanceof Error ? error.message : "Check-in failed." });
+        } finally {
+          inflightRef.current.delete(text);
         }
       },
       { preferredCamera: "environment", maxScansPerSecond: 25, returnDetailedScanResult: true },
