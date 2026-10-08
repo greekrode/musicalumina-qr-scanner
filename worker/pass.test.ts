@@ -25,3 +25,16 @@ test("decodes passes minted by the generator", async () => {
   });
   await expect(decodePass("wrong", VECTOR, 0)).rejects.toThrow("signature");
 });
+
+// Same vector as musicalumina-tools/scripts/qr/pass.test.ts.
+const CUSTOMER_VECTOR = "ML2:AQ3G3R5T6D6UIX4372WVECQTJEUHONMUAB6SM5YFYWIUXGEBKHMMSHV7FYYUSVBX6UG4GBK2ICOIZOY";
+
+test("decodes customer-teacher passes with their event", async () => {
+  expect(await decodePass("test-secret", CUSTOMER_VECTOR, 0)).toEqual({
+    kind: "customer",
+    customerId: "366dc7b3-f0fd-445f-9bfe-ad520a134928",
+    eventId: "7d267705-c591-4b98-8151-d8c91ebf2e31",
+    expiresAt: 2_000_000_000,
+    refCode: "",
+  });
+});

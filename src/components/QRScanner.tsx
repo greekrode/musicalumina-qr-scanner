@@ -316,7 +316,7 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
           {result.verified && (
             <span
               className="type-label inline-flex items-center gap-1 bg-status-open-bg px-2 py-1 text-status-open-fg"
-              title="The pass signature, registration ID and reference code all match the database"
+              title="The pass signature matches, and its registration (with reference code) or teacher record exists in the database"
             >
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Verified
             </span>

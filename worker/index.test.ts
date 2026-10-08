@@ -16,11 +16,14 @@ const env = {
 
 let rpcResult: unknown = { status: "checked_in", registration: { name: "Kid A" } };
 const rpcCalls: unknown[] = [];
+const rpcNames: string[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.endsWith("/.well-known/jwks.json")) return Response.json({ keys: [jwk] });
-  if (url === "https://db.test/rest/v1/rpc/check_in_pass") {
+  const rpc = url.match(/^https:\/\/db\.test\/rest\/v1\/rpc\/(check_in_pass|check_in_customer_pass)$/)?.[1];
+  if (rpc) {
+    rpcNames.push(rpc);
     rpcCalls.push(JSON.parse(String(init?.body)));
     return Response.json(rpcResult);
   }
@@ -77,4 +80,20 @@ test("a performer pass checks in that performer", async () => {
   });
   expect((await call(await session({ role: "reg_staff" }), { pass: performerPass })).status).toBe(200);
   expect(rpcCalls.at(-1)).toMatchObject({ p_kind: "performer:1" });
+});
+
+test("a customer teacher pass checks in through the customers table for its signed event", async () => {
+  rpcResult = { status: "checked_in", kind: "teacher", verified: true, registration: { name: "Elyssa" } };
+  const customerPass = await encodePass("pass-secret", {
+    kind: "customer", customerId: "753891ed-51ab-4c89-baca-99801f1ebcd3", eventId: "7d267705-c591-4b98-8151-d8c91ebf2e31",
+    expiresAt: Math.floor(Date.now() / 1000) + 60, refCode: "",
+  });
+  const res = await call(await session({ role: "reg_staff" }), { pass: customerPass });
+  expect(res.status).toBe(200);
+  expect(rpcNames.at(-1)).toBe("check_in_customer_pass");
+  expect(rpcCalls.at(-1)).toEqual({
+    p_customer_id: "753891ed-51ab-4c89-baca-99801f1ebcd3", p_event_id: "7d267705-c591-4b98-8151-d8c91ebf2e31", p_checked_in_by: "user_1",
+  });
+  rpcResult = { error: "not_eligible" }; // customer deleted or no longer a teacher
+  expect((await call(await session({ role: "reg_staff" }), { pass: customerPass })).status).toBe(404);
 });

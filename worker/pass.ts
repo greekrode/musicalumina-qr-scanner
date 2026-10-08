@@ -2,22 +2,29 @@
 // (musicalumina-tools/scripts/qr/pass.ts — keep both in sync; the test
 // vector in pass.test.ts pins the wire format).
 //
-//   "ML2:" + base32( kind(1) | registrationId(16) | exp u32 BE(4) | [performer(1)] | refCode ASCII(0-20) | hmac-sha256[0..12] )
+//   "ML2:" + base32( kind(1) | id(16) | exp u32 BE(4) | [extra] | refCode ASCII(0-20) | hmac-sha256[0..12] )
 //
-// kind 3 = one performer of a group entry (e.g. a duet): the extra byte is the
-// 0-based index into registrations.performers. Kinds 1 and 2 are unchanged.
+// kind 1 participant / 2 teacher: id = registrations.id, no extra.
+// kind 3 = one performer of a group entry (e.g. a duet): id = registrations.id,
+//   extra = 1 byte, the 0-based index into registrations.performers.
+// kind 4 = teacher from the customers table (not a registrant): id = customers.id,
+//   extra = 16 bytes, the events.id the pass admits to; refCode is empty.
 // Note: this header comment and the layout must stay identical in both copies.
 //
-// ~73 characters, all in the QR alphanumeric set: a version-5 QR at ECC Q
-// (37x37 modules). The old JWT pass needed ~version 20. The server checks the
-// signature, then that the registration id and reference code both match the
-// database before checking anyone in.
+// ~73 characters (kind 4: 83), all in the QR alphanumeric set: version 5
+// at ECC Q. The server checks the signature, then that the ids (and reference
+// code) match the database before checking anyone in.
 
 export const PASS_PREFIX = "ML2:";
-export type PassKind = "participant" | "teacher" | "performer";
+export type PassKind = "participant" | "teacher" | "performer" | "customer";
+export type Pass =
+  | { kind: "participant" | "teacher"; registrationId: string; expiresAt: number; refCode: string }
+  | { kind: "performer"; registrationId: string; expiresAt: number; refCode: string; performer: number }
+  | { kind: "customer"; customerId: string; eventId: string; expiresAt: number; refCode: "" };
 
-const KIND_BYTE: Record<PassKind, number> = { participant: 1, teacher: 2, performer: 3 };
-const BYTE_KIND: Record<number, PassKind> = { 1: "participant", 2: "teacher", 3: "performer" };
+const KIND_BYTE: Record<PassKind, number> = { participant: 1, teacher: 2, performer: 3, customer: 4 };
+const BYTE_KIND: Record<number, PassKind> = { 1: "participant", 2: "teacher", 3: "performer", 4: "customer" };
+const EXTRA_LEN: Record<PassKind, number> = { participant: 0, teacher: 0, performer: 1, customer: 16 };
 const FIXED_LEN = 21; // kind + id + exp
 const MAX_REF_LEN = 20;
 const MAC_LEN = 12; // 96-bit tag; every check is online and rate-bound by staff scanning.
@@ -61,7 +68,7 @@ function base32Decode(text: string): Uint8Array {
 
 function uuidToBytes(uuid: string): Uint8Array {
   const hex = uuid.replace(/-/g, "");
-  if (!/^[0-9a-f]{32}$/i.test(hex)) throw new Error(`Invalid registration id: ${uuid}`);
+  if (!/^[0-9a-f]{32}$/i.test(hex)) throw new Error(`Invalid id: ${uuid}`);
   return Uint8Array.from(hex.match(/../g)!, (pair) => parseInt(pair, 16));
 }
 
@@ -81,23 +88,21 @@ async function mac(secret: string, body: Uint8Array<ArrayBuffer>): Promise<Uint8
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, body)).slice(0, MAC_LEN);
 }
 
-export async function encodePass(
-  secret: string,
-  pass: { kind: PassKind; registrationId: string; expiresAt: number; refCode: string; performer?: number },
-): Promise<string> {
-  const extra = pass.kind === "performer" ? 1 : 0;
-  if (extra && !(Number.isInteger(pass.performer) && pass.performer! >= 0 && pass.performer! < 100)) {
+export async function encodePass(secret: string, pass: Pass): Promise<string> {
+  if (pass.kind === "performer" && !(Number.isInteger(pass.performer) && pass.performer >= 0 && pass.performer < 100)) {
     throw new Error(`Invalid performer index: ${pass.performer}`);
   }
-  if (pass.refCode.length > MAX_REF_LEN || !REF_PATTERN.test(pass.refCode)) {
+  if (pass.refCode.length > MAX_REF_LEN || !REF_PATTERN.test(pass.refCode) || (pass.kind === "customer" && pass.refCode)) {
     throw new Error(`Invalid reference code: ${pass.refCode}`);
   }
+  const extra = EXTRA_LEN[pass.kind];
   const ref = new TextEncoder().encode(pass.refCode);
   const body = new Uint8Array(FIXED_LEN + extra + ref.length);
   body[0] = KIND_BYTE[pass.kind];
-  body.set(uuidToBytes(pass.registrationId), 1);
+  body.set(uuidToBytes(pass.kind === "customer" ? pass.customerId : pass.registrationId), 1);
   new DataView(body.buffer).setUint32(17, pass.expiresAt);
-  if (extra) body[FIXED_LEN] = pass.performer!;
+  if (pass.kind === "performer") body[FIXED_LEN] = pass.performer;
+  if (pass.kind === "customer") body.set(uuidToBytes(pass.eventId), FIXED_LEN);
   body.set(ref, FIXED_LEN + extra);
   const tag = await mac(secret, body);
   const token = new Uint8Array(body.length + MAC_LEN);
@@ -106,10 +111,10 @@ export async function encodePass(
   return PASS_PREFIX + base32Encode(token);
 }
 
-export async function decodePass(secret: string, text: string, now = Date.now() / 1000) {
+export async function decodePass(secret: string, text: string, now = Date.now() / 1000): Promise<Pass> {
   if (!text.startsWith(PASS_PREFIX)) throw new Error("Not a Musica Lumina pass");
   const token = base32Decode(text.slice(PASS_PREFIX.length));
-  if (token.length < FIXED_LEN + MAC_LEN || token.length > FIXED_LEN + 1 + MAX_REF_LEN + MAC_LEN) {
+  if (token.length < FIXED_LEN + MAC_LEN || token.length > FIXED_LEN + 16 + MAX_REF_LEN + MAC_LEN) {
     throw new Error("Invalid pass length");
   }
   const bodyLen = token.length - MAC_LEN;
@@ -122,12 +127,16 @@ export async function decodePass(secret: string, text: string, now = Date.now() 
   if (!kind) throw new Error("Unknown pass kind");
   const expiresAt = new DataView(body.buffer).getUint32(17);
   if (now >= expiresAt) throw new Error("Pass has expired");
-  const extra = kind === "performer" ? 1 : 0;
+  const extra = EXTRA_LEN[kind];
   if (body.length < FIXED_LEN + extra) throw new Error("Invalid pass length");
   const refCode = new TextDecoder().decode(body.slice(FIXED_LEN + extra));
   if (!REF_PATTERN.test(refCode) || refCode.length > MAX_REF_LEN) throw new Error("Invalid reference code");
-  const registrationId = bytesToUuid(body.slice(1, 17));
-  return extra
-    ? { kind, registrationId, expiresAt, refCode, performer: body[FIXED_LEN] }
-    : { kind, registrationId, expiresAt, refCode };
+  const id = bytesToUuid(body.slice(1, 17));
+  if (kind === "customer") {
+    if (refCode) throw new Error("Invalid reference code");
+    return { kind, customerId: id, eventId: bytesToUuid(body.slice(FIXED_LEN, FIXED_LEN + 16)), expiresAt, refCode: "" };
+  }
+  return kind === "performer"
+    ? { kind, registrationId: id, expiresAt, refCode, performer: body[FIXED_LEN] }
+    : { kind, registrationId: id, expiresAt, refCode };
 }

@@ -6,9 +6,9 @@ separate backend.
 
 ## How a scan works
 
-1. `musicalumina-tools/scripts/qr` mints a pass: `ML1:` + base32(kind, registration id, expiry, HMAC). It is 57 characters and renders as a version-4 QR (33×33 modules). The old JWT pass was about version 24.
+1. `musicalumina-tools/scripts/qr` mints a pass: `ML2:` + base32(kind, id, expiry, extra, reference code, HMAC); the layout is documented in `worker/pass.ts`. Registration passes (participant, teacher, performer) carry the registration id; customer-teacher passes (kind 4, for teachers who are not registrants) carry a `customers.id` plus the event id. All fit a version-5 QR.
 2. The scanner reads it (`qr-scanner`, native BarcodeDetector where the device has it) and posts it with the staff member's Clerk session token.
-3. The Worker verifies the Clerk token (RS256 against Clerk's JWKS, `metadata.role` = `admin` or `staff` from Clerk publicMetadata) and the pass HMAC, then makes one RPC call: `check_in_pass` (in `musicalumina-web/supabase/migrations`). That call records the check-in once per registration and kind, and returns the participant.
+3. The Worker verifies the Clerk token (RS256 against Clerk's JWKS, `metadata.role` = `admin` or `reg_staff` from Clerk publicMetadata) and the pass HMAC, then makes one RPC call (both in `musicalumina-web/supabase/migrations`): `check_in_pass` for registration passes (records once per registration and kind) or `check_in_customer_pass` for customer-teacher passes (records once per customer and event; the customer must still be type `teacher` or `music school/institution`). Both return the same result shape.
 
 ## Develop
 

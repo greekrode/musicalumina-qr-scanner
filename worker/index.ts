@@ -2,7 +2,9 @@
 // Same origin as the app, so there is no CORS and no preflight per scan.
 //
 // One scan = verify staff Clerk session (cached JWKS) + verify pass HMAC
-// (local) + one Supabase RPC that checks in and returns the participant.
+// (local) + one Supabase RPC that checks in and returns the participant:
+// check_in_pass for registration passes, check_in_customer_pass for teachers
+// issued from the customers table.
 import { createRemoteJWKSet, errors, jwtVerify } from "jose";
 import { decodePass } from "./pass";
 
@@ -72,31 +74,36 @@ async function checkin(request: Request, env: Env): Promise<Response> {
     return json({ error: error instanceof Error ? error.message : "Invalid pass" }, 422);
   }
 
+  // Registration passes: the RPC refuses the scan unless the signed reference
+  // code matches the DB. Customer passes: the customer must still be a teacher.
+  const [rpc, args] = pass.kind === "customer"
+    ? ["check_in_customer_pass", { p_customer_id: pass.customerId, p_event_id: pass.eventId, p_checked_in_by: userId }]
+    : ["check_in_pass", {
+        p_registration_id: pass.registrationId,
+        // A group entry checks in each performer separately.
+        p_kind: pass.kind === "performer" ? `performer:${pass.performer}` : pass.kind,
+        p_checked_in_by: userId,
+        p_ref_code: pass.refCode,
+      }];
+
   let response: Response;
   try {
-    response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/check_in_pass`, {
+    response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${rpc}`, {
       method: "POST",
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
         Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
         "Content-Type": "application/json",
       },
-      // The RPC refuses the scan unless the signed reference code matches the DB.
-      body: JSON.stringify({
-        p_registration_id: pass.registrationId,
-        // A group entry checks in each performer separately.
-        p_kind: "performer" in pass ? `performer:${pass.performer}` : pass.kind,
-        p_checked_in_by: userId,
-        p_ref_code: pass.refCode,
-      }),
+      body: JSON.stringify(args),
       signal: AbortSignal.timeout(7000),
     });
   } catch (error) {
-    console.error("check_in_pass unreachable", error);
+    console.error(`${rpc} unreachable`, error);
     return json({ error: "Check-in service unavailable. Try again." }, 503);
   }
   if (!response.ok) {
-    console.error("check_in_pass failed", response.status, await response.text());
+    console.error(`${rpc} failed`, response.status, await response.text());
     return json({ error: "Check-in service unavailable. Try again." }, 502);
   }
   const result = (await response.json()) as { error?: string };
