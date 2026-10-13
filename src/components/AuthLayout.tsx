@@ -1,11 +1,7 @@
 import { SignInButton, UserButton, useAuth, useUser } from "@clerk/clerk-react";
 import { Loader2, ShieldAlert } from "lucide-react";
 import type { ReactNode } from "react";
-
-// Must match isStaffRole in worker/index.ts. The Worker is the real gate; this
-// only decides what to render. Role = Clerk publicMetadata.role.
-const STAFF_ROLES = new Set(["admin", "reg_staff"]);
-const isStaffRole = (role: unknown) => typeof role === "string" && STAFF_ROLES.has(role.replace(/^org:/, ""));
+import { useIsStaff } from "../lib/staff";
 
 function Eyebrow({ children }: { children: ReactNode }) {
   return (
@@ -28,23 +24,32 @@ function StateCard({ eyebrow, title, children }: { eyebrow: string; title: strin
   );
 }
 
-export default function AuthLayout({ children }: { children: ReactNode }) {
+/**
+ * Staff-only shell. `tabs` sits in the navbar row and `subbar` right under it;
+ * both render only for staff.
+ */
+export default function AuthLayout({ tabs, subbar, children }: { tabs?: ReactNode; subbar?: ReactNode; children: ReactNode }) {
   const { isLoaded, isSignedIn, signOut } = useAuth();
   const { user } = useUser();
-  const isStaff = isStaffRole(user?.publicMetadata?.role);
+  const isStaff = useIsStaff();
   const resolving = !isLoaded || (isSignedIn && !user);
+  const desk = !resolving && isSignedIn && isStaff;
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-surface-canvas">
       <header className="sticky top-0 z-20 border-b border-rule-hairline bg-surface-canvas/85 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between gap-3 px-4">
+          <div className="flex min-w-0 items-center gap-3">
             <img src="/logo.png" alt="Musica Lumina" className="h-6 w-auto" />
-            <span aria-hidden className="h-5 w-px bg-rule-subtle" />
-            <span className="type-label text-ink-muted">Check-in desk</span>
+            <span aria-hidden className={`h-5 w-px bg-rule-subtle ${desk ? "hidden sm:block" : ""}`} />
+            <span className={`type-label text-ink-muted ${desk ? "hidden sm:inline" : ""}`}>Check-in desk</span>
           </div>
-          {isSignedIn && <UserButton />}
+          <div className="flex shrink-0 items-center gap-3">
+            {desk && tabs}
+            {isSignedIn && <UserButton />}
+          </div>
         </div>
+        {desk && subbar}
       </header>
 
       {resolving ? (

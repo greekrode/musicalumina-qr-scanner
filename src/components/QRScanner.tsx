@@ -1,12 +1,15 @@
 import { useAuth } from "@clerk/clerk-react";
-import { Camera, CheckCircle2, AlertCircle, Flashlight, FlashlightOff, History, Loader2, RotateCcw, ShieldCheck, Square } from "lucide-react";
+import { Camera, CheckCircle2, AlertCircle, CalendarClock, Flashlight, FlashlightOff, History, Loader2, RotateCcw, ShieldCheck, Square, Ticket } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { useEffect, useRef, useState } from "react";
-import { checkInPass, NO_CONNECTION, PASS_PREFIX, type CheckinResult } from "../lib/checkinApi";
+import { checkInPass, NO_CONNECTION, PASS_PREFIX, type CheckinResult, type PassContext, type SavedTickets } from "../lib/api";
+import { clock, ticketsWord } from "../lib/schedule";
+import TicketDialog from "./TicketDialog";
 
+type Done = { id: number; phase: "done"; result: CheckinResult; /** the scanned text, re-sent to buy tickets */ pass: string };
 type Scan =
   | { id: number; phase: "verifying" }
-  | { id: number; phase: "done"; result: CheckinResult }
+  | Done
   | { id: number; phase: "error"; message: string };
 
 type Finished = Exclude<Scan, { phase: "verifying" }>;
@@ -51,7 +54,23 @@ function feedback(audio: AudioContext | null, tone: Tone) {
   });
 }
 
-export default function QRScanner() {
+/** Applies a ticket save to the scan's context: the holder's tickets and that session's seats. */
+function withTickets(context: PassContext, saved: SavedTickets): PassContext {
+  const others = context.tickets.filter((t) => t.sessionNumber !== saved.sessionNumber);
+  return {
+    ...context,
+    tickets: saved.quantity > 0
+      ? [...others, { sessionNumber: saved.sessionNumber, quantity: saved.quantity }].sort((a, b) => a.sessionNumber - b.sessionNumber)
+      : others,
+    sessions: context.sessions.map((s) => (s.number === saved.sessionNumber ? { ...s, ticketsLeft: saved.ticketsLeft } : s)),
+  };
+}
+
+/**
+ * `active`: the Scan tab is showing; leaving it stops the camera.
+ * `onActivity`: a check-in or ticket sale happened, so seat counts changed.
+ */
+export default function QRScanner({ active, onActivity }: { active: boolean; onActivity: () => void }) {
   const { getToken, userId } = useAuth();
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerRef = useRef<QrScanner | null>(null);
@@ -63,6 +82,10 @@ export default function QRScanner() {
   const inflightRef = useRef(new Set<string>());
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
+  // While the ticket dialog is open, a pass in view must not start a new scan.
+  const ticketingRef = useRef(false);
 
   const [running, setRunning] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -71,6 +94,8 @@ export default function QRScanner() {
   const [flashOn, setFlashOn] = useState(false);
   const [current, setCurrent] = useState<Scan | null>(null);
   const [history, setHistory] = useState<Finished[]>([]);
+  const [ticketing, setTicketing] = useState<Done | null>(null);
+  ticketingRef.current = ticketing !== null;
 
   useEffect(() => {
     const video = videoRef.current!;
@@ -87,7 +112,7 @@ export default function QRScanner() {
         const text = data.trim();
         const now = Date.now();
         const last = recentRef.current.get(text);
-        if (!text || inflightRef.current.has(text) || (last && now - last < DUPLICATE_WINDOW_MS)) return;
+        if (!text || ticketingRef.current || inflightRef.current.has(text) || (last && now - last < DUPLICATE_WINDOW_MS)) return;
         recentRef.current.set(text, now);
 
         const id = ++sequenceRef.current;
@@ -103,8 +128,9 @@ export default function QRScanner() {
             throw new Error(NO_CONNECTION);
           });
           const result = await checkInPass(text, token);
-          record({ id, phase: "done", result });
+          record({ id, phase: "done", result, pass: text });
           recentRef.current.set(text, Date.now()); // duplicate window starts when the answer arrives
+          onActivityRef.current();
         } catch (error) {
           // Let staff retry the same pass immediately after a failure.
           recentRef.current.delete(text);
@@ -121,6 +147,23 @@ export default function QRScanner() {
       scannerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (active) return;
+    scannerRef.current?.stop();
+    setRunning(false);
+    setFlashOn(false);
+  }, [active]);
+
+  const applyTickets = (scanId: number, saved: SavedTickets) => {
+    const update = <S extends Scan>(scan: S): S =>
+      scan.phase === "done" && scan.id === scanId && scan.result.context
+        ? { ...scan, result: { ...scan.result, context: withTickets(scan.result.context, saved) } }
+        : scan;
+    setCurrent((prev) => prev && update(prev));
+    setHistory((prev) => prev.map(update));
+    onActivity();
+  };
 
   const start = async () => {
     const scanner = scannerRef.current;
@@ -216,8 +259,20 @@ export default function QRScanner() {
       )}
 
       <div aria-live="polite" className="mx-auto max-w-md">
-        {current && current.phase !== "verifying" && <ResultCard scan={current} userId={userId} />}
+        {current && current.phase !== "verifying" && (
+          <ResultCard scan={current} userId={userId} onBuy={current.phase === "done" ? () => setTicketing(current) : undefined} />
+        )}
       </div>
+
+      {ticketing?.result.context && (
+        <TicketDialog
+          pass={ticketing.pass}
+          holderName={ticketing.result.registration.name ?? "Pass holder"}
+          context={ticketing.result.context}
+          onClose={() => setTicketing(null)}
+          onSaved={(saved) => applyTickets(ticketing.id, saved)}
+        />
+      )}
 
       {history.length > 0 && (
         <details className="mx-auto max-w-md border-t border-rule-hairline pt-4">
@@ -257,7 +312,7 @@ export default function QRScanner() {
   );
 }
 
-function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | undefined }) {
+function ResultCard({ scan, userId, onBuy }: { scan: Finished; userId: string | null | undefined; onBuy?: () => void }) {
   const tone = toneOf(scan)!;
   const style = TONE_STYLE[tone];
 
@@ -322,6 +377,7 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
             </span>
           )}
         </div>
+        {result.context && <ScheduleAndTickets context={result.context} onBuy={onBuy} />}
         {details.length > 0 && (
           <dl className="mt-5 divide-y divide-rule-hairline border-t border-rule-hairline">
             {details.map(([label, value]) => (
@@ -334,5 +390,70 @@ function ResultCard({ scan, userId }: { scan: Finished; userId: string | null | 
         )}
       </div>
     </article>
+  );
+}
+
+function ScheduleAndTickets({ context, onBuy }: { context: PassContext; onBuy?: () => void }) {
+  const { performances, tickets, fixedSession } = context;
+  const fixed = context.sessions.find((s) => s.number === fixedSession);
+  const canBuy = onBuy && context.sessions.length > 0 && (context.chooseSession || fixed);
+
+  return (
+    <>
+      {fixed ? (
+        <div className="mt-5 border-l-2 border-marigold bg-surface-warm/60 px-4 py-3">
+          <p className="type-label inline-flex items-center gap-1.5 text-ink-muted">
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden /> Plays in
+          </p>
+          <p className="mt-1 font-serif text-[1.375rem] text-ink-primary">
+            Session {fixed.number} <span className="font-sans text-[0.9375rem] tabular-nums text-ink-muted">· {clock(fixed.startsAt)}–{clock(fixed.endsAt)}</span>
+          </p>
+          {performances.map((p) => (
+            <p key={`${p.sessionNumber}-${p.startsAt}`} className="mt-0.5 text-[0.875rem] tabular-nums text-ink-body">
+              {[p.categoryName, p.subCategoryName].filter(Boolean).join(" · ")} · #{p.order} · {clock(p.startsAt)}–{clock(p.endsAt)}
+            </p>
+          ))}
+        </div>
+      ) : performances.length > 0 ? (
+        <div className="mt-5 border-l-2 border-marigold bg-surface-warm/60 px-4 py-3">
+          <p className="type-label inline-flex items-center gap-1.5 text-ink-muted">
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden /> Students play in
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {performances.map((p) => (
+              <li key={`${p.sessionNumber}-${p.startsAt}-${p.order}`} className="flex gap-3 text-[0.875rem]">
+                <span className="w-[5.5rem] shrink-0 whitespace-nowrap tabular-nums text-ink-muted">S{p.sessionNumber} · {clock(p.startsAt)}</span>
+                <span className="min-w-0 text-ink-body">
+                  <span className="text-ink-primary">{p.name}</span> · {[p.categoryName, p.subCategoryName].filter(Boolean).join(" · ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        !context.chooseSession && <p className="mt-5 text-[0.875rem] text-ink-muted">Not on the running order.</p>
+      )}
+
+      {canBuy && (
+        <div className="mt-4 flex items-center justify-between gap-4 border border-rule-hairline px-4 py-3">
+          <div className="min-w-0">
+            <p className="type-label inline-flex items-center gap-1.5 text-ink-muted">
+              <Ticket className="h-3.5 w-3.5" aria-hidden /> Tickets
+            </p>
+            <p className="mt-0.5 text-[0.9375rem] tabular-nums text-ink-primary">
+              {tickets.length ? tickets.map((t) => `${t.quantity} for Session ${t.sessionNumber}`).join(" · ") : "None bought"}
+            </p>
+            {fixed && (
+              <p className={`text-[0.8125rem] tabular-nums ${fixed.ticketsLeft === 0 ? "text-status-error-fg" : "text-ink-muted"}`}>
+                {fixed.ticketsLeft} {ticketsWord(fixed.ticketsLeft)} left in Session {fixed.number}
+              </p>
+            )}
+          </div>
+          <button type="button" className={`${tickets.length ? "btn-outline" : "btn-primary"} h-11 shrink-0 px-4`} onClick={onBuy}>
+            <Ticket className="h-4 w-4" aria-hidden /> {tickets.length ? "Edit tickets" : "Buy ticket"}
+          </button>
+        </div>
+      )}
+    </>
   );
 }

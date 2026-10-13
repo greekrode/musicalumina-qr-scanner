@@ -25,4 +25,6 @@
   .btn-primary { @apply btn bg-marigold text-burgundy hover:bg-marigold-600; }
   .btn-secondary { @apply btn bg-burgundy text-offWhite hover:bg-burgundy-600; }
   .btn-outline { @apply btn border border-burgundy/30 text-burgundy hover:border-marigold hover:bg-marigold; }
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
 }

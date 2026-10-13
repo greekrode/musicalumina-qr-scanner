@@ -1,12 +1,16 @@
-// Scanner Worker: serves the PWA (static assets) and POST /api/checkin.
+// Scanner Worker: serves the PWA (static assets) and the staff API.
 // Same origin as the app, so there is no CORS and no preflight per scan.
 //
-// One scan = verify staff Clerk session (cached JWKS) + verify pass HMAC
-// (local) + one Supabase RPC that checks in and returns the participant:
-// check_in_pass for registration passes, check_in_customer_pass for teachers
-// issued from the customers table.
+//   POST /api/checkin  verify staff Clerk session (cached JWKS) + pass HMAC
+//                      (local), then in parallel: the check-in RPC
+//                      (check_in_pass for registration passes,
+//                      check_in_customer_pass for customer teachers) and
+//                      scanner_pass_context (where the holder plays, their tickets).
+//   POST /api/tickets  set the tickets a scanned pass holds for one session.
+//   GET  /api/event    the ongoing festival's running order, check-ins and
+//                      tickets left per session (Participants tab + navbar).
 import { createRemoteJWKSet, errors, jwtVerify } from "jose";
-import { decodePass } from "./pass";
+import { decodePass, type Pass } from "./pass";
 
 export interface Env {
   ASSETS: Fetcher;
@@ -17,7 +21,7 @@ export interface Env {
   QR_PASS_SECRET: string; // secret, must match musicalumina-tools/.env
 }
 
-// QR check-in roles: admin and reg_staff. Must match src/components/AuthLayout.tsx.
+// QR check-in roles: admin and reg_staff. Must match src/lib/staff.ts.
 // Accepts the legacy "org:admin" spelling some accounts may still carry.
 const STAFF_ROLES = new Set(["admin", "reg_staff"]);
 const isStaffRole = (role: unknown) =>
@@ -31,6 +35,13 @@ const AUTH_FAILURES = [
   errors.JWSSignatureVerificationFailed, errors.JWKSNoMatchingKey, errors.JWKSMultipleMatchingKeys, errors.JOSEAlgNotAllowed,
 ];
 class VerifierUnavailable extends Error {}
+class ServiceUnavailable extends Error {
+  constructor(readonly status: 502 | 503) {
+    super(`Supabase ${status}`);
+  }
+}
+
+const MAX_TICKETS = 999; // must match set_session_tickets
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -54,41 +65,21 @@ async function staffUserId(request: Request, env: Env): Promise<string | null> {
   }
 }
 
-async function checkin(request: Request, env: Env): Promise<Response> {
-  let userId: string | null;
+/** The staff user id, or the error response to send instead. */
+async function authorize(request: Request, env: Env): Promise<string | Response> {
   try {
-    userId = await staffUserId(request, env);
+    const userId = await staffUserId(request, env);
+    return userId ?? json({ error: "Your session is not allowed to use the check-in desk. Sign in again." }, 401);
   } catch (error) {
     console.error("session verification unavailable", error);
     return json({ error: "Could not verify your session right now. Try again in a moment." }, 503);
   }
-  if (!userId) return json({ error: "Your session is not allowed to check in passes. Sign in again." }, 401);
+}
 
-  const body = (await request.json().catch(() => null)) as { pass?: unknown } | null;
-  if (typeof body?.pass !== "string") return json({ error: "Missing pass" }, 400);
-
-  let pass;
-  try {
-    pass = await decodePass(env.QR_PASS_SECRET, body.pass.trim());
-  } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Invalid pass" }, 422);
-  }
-
-  // Registration passes: the RPC refuses the scan unless the signed reference
-  // code matches the DB. Customer passes: the customer must still be a teacher.
-  const [rpc, args] = pass.kind === "customer"
-    ? ["check_in_customer_pass", { p_customer_id: pass.customerId, p_event_id: pass.eventId, p_checked_in_by: userId }]
-    : ["check_in_pass", {
-        p_registration_id: pass.registrationId,
-        // A group entry checks in each performer separately.
-        p_kind: pass.kind === "performer" ? `performer:${pass.performer}` : pass.kind,
-        p_checked_in_by: userId,
-        p_ref_code: pass.refCode,
-      }];
-
+async function rpc(env: Env, name: string, args: object): Promise<Record<string, unknown> | null> {
   let response: Response;
   try {
-    response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${rpc}`, {
+    response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${name}`, {
       method: "POST",
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -99,25 +90,147 @@ async function checkin(request: Request, env: Env): Promise<Response> {
       signal: AbortSignal.timeout(7000),
     });
   } catch (error) {
-    console.error(`${rpc} unreachable`, error);
-    return json({ error: "Check-in service unavailable. Try again." }, 503);
+    console.error(`${name} unreachable`, error);
+    throw new ServiceUnavailable(503);
   }
   if (!response.ok) {
-    console.error(`${rpc} failed`, response.status, await response.text());
-    return json({ error: "Check-in service unavailable. Try again." }, 502);
+    console.error(`${name} failed`, response.status, await response.text());
+    throw new ServiceUnavailable(502);
   }
-  const result = (await response.json()) as { error?: string };
-  if (result.error === "mismatch") return json({ error: "QR data does not match the registration record." }, 422);
-  if (result.error) return json({ error: "This registration is not eligible for check-in." }, 404);
-
-  return json(result);
+  return (await response.json()) as Record<string, unknown> | null;
 }
+
+/** Who a pass belongs to, in the shape the ticket RPCs take. */
+function holderArgs(pass: Pass) {
+  return pass.kind === "customer"
+    ? { p_registration_id: null, p_customer_id: pass.customerId, p_event_id: pass.eventId, p_holder: "customer" }
+    : {
+        p_registration_id: pass.registrationId,
+        p_customer_id: null,
+        p_event_id: null,
+        // A group entry holds tickets per performer, like its check-ins.
+        p_holder: pass.kind === "performer" ? `performer:${pass.performer}` : pass.kind,
+      };
+}
+
+async function readPass(request: Request, env: Env): Promise<{ pass: Pass; body: Record<string, unknown> } | Response> {
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof body?.pass !== "string") return json({ error: "Missing pass" }, 400);
+  try {
+    return { pass: await decodePass(env.QR_PASS_SECRET, body.pass.trim()), body };
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Invalid pass" }, 422);
+  }
+}
+
+async function checkin(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const read = await readPass(request, env);
+  if (read instanceof Response) return read;
+  const { pass } = read;
+
+  // Registration passes: the RPC refuses the scan unless the signed reference
+  // code matches the DB. Customer passes: the customer must still be a teacher.
+  const [name, args] = pass.kind === "customer"
+    ? ["check_in_customer_pass", { p_customer_id: pass.customerId, p_event_id: pass.eventId, p_checked_in_by: userId }]
+    : ["check_in_pass", {
+        p_registration_id: pass.registrationId,
+        // A group entry checks in each performer separately.
+        p_kind: pass.kind === "performer" ? `performer:${pass.performer}` : pass.kind,
+        p_checked_in_by: userId,
+        p_ref_code: pass.refCode,
+      }];
+
+  let result: Record<string, unknown> | null;
+  let context: unknown;
+  try {
+    [result, context] = await Promise.all([
+      rpc(env, name, args),
+      // The schedule only decorates the result: a failure here must not fail the check-in.
+      rpc(env, "scanner_pass_context", holderArgs(pass)).catch(() => null),
+    ]);
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Check-in service unavailable. Try again." }, error.status);
+  }
+  if (result?.error === "mismatch") return json({ error: "QR data does not match the registration record." }, 422);
+  if (!result || result.error) return json({ error: "This registration is not eligible for check-in." }, 404);
+
+  return json({ ...result, context });
+}
+
+async function tickets(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const read = await readPass(request, env);
+  if (read instanceof Response) return read;
+  const { pass, body } = read;
+
+  const { quantity, sessionNumber = null } = body;
+  if (!Number.isInteger(quantity) || (quantity as number) < 0 || (quantity as number) > MAX_TICKETS) {
+    return json({ error: `Enter a number of tickets from 0 to ${MAX_TICKETS}.` }, 400);
+  }
+  if (sessionNumber !== null && !(Number.isInteger(sessionNumber) && (sessionNumber as number) > 0)) {
+    return json({ error: "Pick a session." }, 400);
+  }
+
+  let result: Record<string, unknown> | null;
+  try {
+    result = await rpc(env, "set_session_tickets", {
+      ...holderArgs(pass),
+      p_session_number: sessionNumber,
+      p_quantity: quantity,
+      p_updated_by: userId,
+    });
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Ticket service unavailable. Try again." }, error.status);
+  }
+
+  switch (result?.error) {
+    case undefined:
+      return json(result);
+    case "over_capacity": {
+      const available = Number(result.available);
+      return json({
+        error: `Session ${result.sessionNumber} only has room for ${available} ${available === 1 ? "ticket" : "tickets"} on this pass.`,
+        available,
+      }, 409);
+    }
+    case "wrong_session":
+      return json({ error: "The running order changed. Scan the pass again." }, 409);
+    case "no_session":
+      return json({ error: sessionNumber === null ? "Pick a session." : "That session is not on the running order." }, 422);
+    case "invalid_quantity":
+      return json({ error: `Enter a number of tickets from 0 to ${MAX_TICKETS}.` }, 400);
+    default:
+      return json({ error: "This pass cannot buy tickets." }, 404);
+  }
+}
+
+async function overview(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  try {
+    return json(await rpc(env, "scanner_event_overview", {}));
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Schedule unavailable. Try again." }, error.status);
+  }
+}
+
+const ROUTES: Record<string, [method: string, handler: (request: Request, env: Env) => Promise<Response>]> = {
+  "/api/checkin": ["POST", checkin],
+  "/api/tickets": ["POST", tickets],
+  "/api/event": ["GET", overview],
+};
 
 export default {
   async fetch(request, env) {
-    const { pathname } = new URL(request.url);
-    if (pathname === "/api/checkin") {
-      return request.method === "POST" ? checkin(request, env) : json({ error: "Method not allowed" }, 405);
+    const route = ROUTES[new URL(request.url).pathname];
+    if (route) {
+      return request.method === route[0] ? route[1](request, env) : json({ error: "Method not allowed" }, 405);
     }
     return env.ASSETS.fetch(request);
   },
