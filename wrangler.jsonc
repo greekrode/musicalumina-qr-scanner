@@ -16,5 +16,5 @@
     "CLERK_AUTHORIZED_PARTIES": "https://qr.musicalumina.com",
     "SUPABASE_URL": "https://gmkztaeonvcdrrmwxlnm.supabase.co"
   }
-  // Secrets: wrangler secret put SUPABASE_SERVICE_ROLE_KEY / QR_PASS_SECRET
+  // Secrets: wrangler secret put SUPABASE_SERVICE_ROLE_KEY / QR_PASS_SECRET / MAYAR_TOKEN
 }

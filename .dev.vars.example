@@ -3,3 +3,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 # Fresh secret; must match QR_PASS_SECRET in musicalumina-tools/.env.
 # Generate with: openssl rand -base64 32
 QR_PASS_SECRET=
+# QRIS ticket payments: the Mayar app's bearer value (the part after
+# "Authorization: Bearer " in a Mayar app request). It expires about a day
+# after sign-in; rotate it with `wrangler secret put MAYAR_TOKEN`.
+MAYAR_TOKEN=

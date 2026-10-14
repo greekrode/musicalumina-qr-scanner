@@ -16,12 +16,21 @@ tickets per festival session. One Cloudflare Worker serves the app and the
 - `POST /api/tickets` `{ pass, sessionNumber, quantity }` sets (0 clears) the tickets the scanned pass holds via `set_session_tickets`, serialised per session so two desks cannot oversell. Participants and performers buy for the session they play in; teachers pick any session.
 - `GET /api/event` (`scanner_event_overview`) returns the ongoing festival's running order grouped by session and category, with check-ins, tickets, and tickets left. The navbar strip and the Participants tab poll it every 30 s.
 
+## QRIS (Mayar)
+
+- `events.ticket_price` (IDR; admin → Events → Edit, festival events) prices one ticket. Empty turns QRIS off.
+- In the ticket dialog, **Pay with QRIS** asks `POST /api/payments` for (tickets − tickets already held) × price, plus a unique code of 1–9 rupiah. The Worker holds those seats for 5 minutes (`start_ticket_payment`) and creates a Mayar "Pay Me" QR for that amount, e.g. IDR 150,004.
+- The dialog calls `POST /api/payments/status` every second. The Worker reads Mayar's latest payme credits, and `settle_ticket_payment` claims the first unclaimed `paid`/`settled` credit of exactly that amount made while the QR was live, then adds the tickets. **Cancel payment** checks one last time before dropping the QR.
+- Mayar's history does not say which QR a credit paid, so the amount is the only link. The unique code is picked at random from the codes no waiting QR of the same base amount is using, so up to nine desks can wait on the same number of tickets at once. A tenth is refused until one is paid, cancelled or expired.
+- The code also keeps round Pay Me credits from elsewhere on the account from matching a desk QR. A non-round credit of exactly the same amount made while that QR waits would still be claimed, so avoid using Pay Me elsewhere during the festival.
+- `MAYAR_TOKEN` is the Mayar app's bearer token, not an API key. The access token expires about 24 h after sign-in, and the desk then shows "QRIS is signed out of Mayar". To rotate it, run `wrangler secret put MAYAR_TOKEN`. Secrets apply to the next request, so no redeploy is needed.
+
 ## Develop
 
 ```bash
 bun install
 cp .env.example .env              # VITE_CLERK_PUBLISHABLE_KEY
-cp .dev.vars.example .dev.vars    # SUPABASE_SERVICE_ROLE_KEY, QR_PASS_SECRET
+cp .dev.vars.example .dev.vars    # SUPABASE_SERVICE_ROLE_KEY, QR_PASS_SECRET, MAYAR_TOKEN
 bun run dev:worker                # API on :8787
 bun run dev                       # app on :5173, proxies /api
 bun test                          # pass codec + Worker auth tests
@@ -38,6 +47,7 @@ Fill in the `vars` in `wrangler.jsonc`, then:
 ```bash
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 wrangler secret put QR_PASS_SECRET
+wrangler secret put MAYAR_TOKEN   # again whenever Mayar signs it out
 bun run deploy
 ```
 

@@ -24,6 +24,8 @@ export type HeldTickets = { sessionNumber: number; quantity: number };
 /** Where a scanned pass holder plays and the tickets they hold (scanner_pass_context). */
 export type PassContext = {
   eventId: string;
+  /** IDR per ticket for QRIS; null when the event takes no QRIS. */
+  ticketPrice: number | null;
   /** Teachers buy for any session; participants and performers only for their own. */
   chooseSession: boolean;
   fixedSession: number | null;
@@ -91,6 +93,16 @@ export type Overview = {
 
 export type SavedTickets = { sessionNumber: number; quantity: number; ticketsLeft: number };
 
+/**
+ * A QRIS payment on screen: the QR pays `amount` (price × `quantity` + `uniqueCode`)
+ * for `quantity` more tickets. The 1–9 code keeps concurrent QRs of the same price apart.
+ */
+export type QrisPayment = { paymentId: string; sessionNumber: number; quantity: number; amount: number; uniqueCode: number; expiresAt: string; qrCode: string };
+
+export type PaymentStatus =
+  | { status: "pending" | "cancelled" | "expired"; amount: number; expiresAt: string }
+  | ({ status: "paid"; amount: number } & SavedTickets);
+
 export const NO_CONNECTION = "No connection. Check Wi-Fi and try again.";
 
 export class ApiError extends Error {
@@ -132,3 +144,11 @@ export const fetchOverview = (sessionToken: string | null) =>
 /** Set the tickets a pass holds for one session; 0 removes them. */
 export const saveTickets = (pass: string, sessionNumber: number | null, quantity: number, sessionToken: string | null) =>
   call<SavedTickets>("/api/tickets", sessionToken, "Could not save the tickets. Try again.", { pass, sessionNumber, quantity });
+
+/** Hold the seats and get a Mayar QR for `quantity` more tickets. */
+export const startQrisPayment = (pass: string, sessionNumber: number | null, quantity: number, sessionToken: string | null) =>
+  call<QrisPayment>("/api/payments", sessionToken, "Could not start the QRIS payment. Try again.", { pass, sessionNumber, quantity });
+
+/** Has the QR been paid? With `cancel`, a last check, then the QR is dropped. */
+export const checkQrisPayment = (paymentId: string, cancel: boolean, sessionToken: string | null) =>
+  call<PaymentStatus>("/api/payments/status", sessionToken, "Could not check the payment.", { paymentId, cancel });

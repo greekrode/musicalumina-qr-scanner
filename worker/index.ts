@@ -7,9 +7,16 @@
 //                      check_in_customer_pass for customer teachers) and
 //                      scanner_pass_context (where the holder plays, their tickets).
 //   POST /api/tickets  set the tickets a scanned pass holds for one session.
+//   POST /api/payments start a QRIS payment for more tickets: holds the seats
+//                      (start_ticket_payment) and creates a Mayar QR for
+//                      ticket price × tickets.
+//   POST /api/payments/status  the desk polls this every second: reads Mayar's
+//                      latest payme credits and settle_ticket_payment adds the
+//                      tickets once a matching credit lands (or cancels).
 //   GET  /api/event    the ongoing festival's running order, check-ins and
 //                      tickets left per session (Participants tab + navbar).
 import { createRemoteJWKSet, errors, jwtVerify } from "jose";
+import { createQrCode, MayarError, recentPaymeCredits, type PaymeCredit } from "./mayar";
 import { decodePass, type Pass } from "./pass";
 
 export interface Env {
@@ -19,6 +26,7 @@ export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string; // secret
   QR_PASS_SECRET: string; // secret, must match musicalumina-tools/.env
+  MAYAR_TOKEN: string; // secret, Mayar app bearer token for QRIS; rotate when it expires
 }
 
 // QR check-in roles: admin and reg_staff. Must match src/lib/staff.ts.
@@ -41,7 +49,8 @@ class ServiceUnavailable extends Error {
   }
 }
 
-const MAX_TICKETS = 999; // must match set_session_tickets
+const MAX_TICKETS = 999; // must match set_session_tickets / start_ticket_payment
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -160,37 +169,21 @@ async function checkin(request: Request, env: Env): Promise<Response> {
   return json({ ...result, context });
 }
 
-async function tickets(request: Request, env: Env): Promise<Response> {
-  const userId = await authorize(request, env);
-  if (userId instanceof Response) return userId;
-  const read = await readPass(request, env);
-  if (read instanceof Response) return read;
-  const { pass, body } = read;
-
+/** Ticket body fields shared by /api/tickets and /api/payments, or the 400 to send. */
+function ticketRequest(body: Record<string, unknown>, min: number): { quantity: number; sessionNumber: number | null } | Response {
   const { quantity, sessionNumber = null } = body;
-  if (!Number.isInteger(quantity) || (quantity as number) < 0 || (quantity as number) > MAX_TICKETS) {
-    return json({ error: `Enter a number of tickets from 0 to ${MAX_TICKETS}.` }, 400);
+  if (!Number.isInteger(quantity) || (quantity as number) < min || (quantity as number) > MAX_TICKETS) {
+    return json({ error: `Enter a number of tickets from ${min} to ${MAX_TICKETS}.` }, 400);
   }
   if (sessionNumber !== null && !(Number.isInteger(sessionNumber) && (sessionNumber as number) > 0)) {
     return json({ error: "Pick a session." }, 400);
   }
+  return { quantity: quantity as number, sessionNumber: sessionNumber as number | null };
+}
 
-  let result: Record<string, unknown> | null;
-  try {
-    result = await rpc(env, "set_session_tickets", {
-      ...holderArgs(pass),
-      p_session_number: sessionNumber,
-      p_quantity: quantity,
-      p_updated_by: userId,
-    });
-  } catch (error) {
-    if (!(error instanceof ServiceUnavailable)) throw error;
-    return json({ error: "Ticket service unavailable. Try again." }, error.status);
-  }
-
-  switch (result?.error) {
-    case undefined:
-      return json(result);
+/** Why set_session_tickets / start_ticket_payment refused. */
+function ticketRefusal(result: Record<string, unknown>, sessionNumber: number | null, min: number): Response {
+  switch (result.error) {
     case "over_capacity": {
       const available = Number(result.available);
       return json({
@@ -203,10 +196,121 @@ async function tickets(request: Request, env: Env): Promise<Response> {
     case "no_session":
       return json({ error: sessionNumber === null ? "Pick a session." : "That session is not on the running order." }, 422);
     case "invalid_quantity":
-      return json({ error: `Enter a number of tickets from 0 to ${MAX_TICKETS}.` }, 400);
+      return json({ error: `Enter a number of tickets from ${min} to ${MAX_TICKETS}.` }, 400);
     default:
       return json({ error: "This pass cannot buy tickets." }, 404);
   }
+}
+
+async function tickets(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const read = await readPass(request, env);
+  if (read instanceof Response) return read;
+  const { pass, body } = read;
+  const ask = ticketRequest(body, 0);
+  if (ask instanceof Response) return ask;
+
+  let result: Record<string, unknown> | null;
+  try {
+    result = await rpc(env, "set_session_tickets", {
+      ...holderArgs(pass),
+      p_session_number: ask.sessionNumber,
+      p_quantity: ask.quantity,
+      p_updated_by: userId,
+    });
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Ticket service unavailable. Try again." }, error.status);
+  }
+  return result && result.error === undefined ? json(result) : ticketRefusal(result ?? {}, ask.sessionNumber, 0);
+}
+
+function mayarFailure(error: unknown): Response {
+  if (!(error instanceof MayarError)) throw error;
+  console.error("mayar", error.message);
+  switch (error.kind) {
+    case "expired":
+      return json({ error: "QRIS is signed out of Mayar. Ask an admin to update MAYAR_TOKEN." }, 503);
+    case "refused":
+      return json({ error: `Mayar refused the QR: ${error.message}` }, 502);
+    default:
+      return json({ error: "Could not reach Mayar for QRIS. Try again." }, 502);
+  }
+}
+
+async function startPayment(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const read = await readPass(request, env);
+  if (read instanceof Response) return read;
+  const { pass, body } = read;
+  const ask = ticketRequest(body, 1);
+  if (ask instanceof Response) return ask;
+  if (!env.MAYAR_TOKEN) return json({ error: "QRIS is not set up. Ask an admin to set MAYAR_TOKEN." }, 503);
+
+  let started: Record<string, unknown> | null;
+  try {
+    started = await rpc(env, "start_ticket_payment", {
+      ...holderArgs(pass),
+      p_session_number: ask.sessionNumber,
+      p_quantity: ask.quantity,
+      p_created_by: userId,
+    });
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Payment service unavailable. Try again." }, error.status);
+  }
+  if (!started || started.error !== undefined) {
+    switch (started?.error) {
+      case "amount_pending":
+        // Every unique code (1–9) for this amount is on a QR at another desk.
+        return json({
+          error: `Too many desks are waiting for a QRIS payment of IDR ${Number(started.amount).toLocaleString("en-US")}. Wait for one to finish, or pay by cash.`,
+        }, 409);
+      case "no_price":
+        return json({ error: "No ticket price is set for this event (admin → Events → Edit)." }, 422);
+      default:
+        return ticketRefusal(started ?? {}, ask.sessionNumber, 1);
+    }
+  }
+
+  let qrCode: string;
+  try {
+    qrCode = await createQrCode(env.MAYAR_TOKEN, Number(started.amount));
+  } catch (error) {
+    // Release the held seats and amount; nobody can pay a QR they never saw.
+    await rpc(env, "settle_ticket_payment", { p_payment_id: started.paymentId, p_items: [], p_cancel: true }).catch(() => null);
+    return mayarFailure(error);
+  }
+  return json({ ...started, qrCode });
+}
+
+async function paymentStatus(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof body?.paymentId !== "string" || !UUID.test(body.paymentId)) return json({ error: "Missing payment" }, 400);
+  if (!env.MAYAR_TOKEN) return json({ error: "QRIS is not set up. Ask an admin to set MAYAR_TOKEN." }, 503);
+
+  let credits: PaymeCredit[];
+  try {
+    credits = await recentPaymeCredits(env.MAYAR_TOKEN);
+  } catch (error) {
+    return mayarFailure(error);
+  }
+  let result: Record<string, unknown> | null;
+  try {
+    result = await rpc(env, "settle_ticket_payment", {
+      p_payment_id: body.paymentId,
+      p_items: credits,
+      p_cancel: body.cancel === true,
+    });
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Payment service unavailable. Try again." }, error.status);
+  }
+  return result && result.error === undefined ? json(result) : json({ error: "Payment not found." }, 404);
 }
 
 async function overview(request: Request, env: Env): Promise<Response> {
@@ -223,6 +327,8 @@ async function overview(request: Request, env: Env): Promise<Response> {
 const ROUTES: Record<string, [method: string, handler: (request: Request, env: Env) => Promise<Response>]> = {
   "/api/checkin": ["POST", checkin],
   "/api/tickets": ["POST", tickets],
+  "/api/payments": ["POST", startPayment],
+  "/api/payments/status": ["POST", paymentStatus],
   "/api/event": ["GET", overview],
 };
 
