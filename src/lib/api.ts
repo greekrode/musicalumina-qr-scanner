@@ -116,7 +116,10 @@ export type UnclaimedQr = {
 /** A Mayar payment no desk claimed, with the QRs of exactly that amount it could pay. */
 export type UnclaimedCredit = { id: string; amount: number; paidAt: string; payments: UnclaimedQr[] };
 
-export type ClaimedTickets = SavedTickets & { amount: number; holderName: string | null };
+/** Tickets just paid for (QRIS claim, cash, or bank transfer). */
+export type PaidTickets = SavedTickets & { amount: number; holderName: string | null };
+
+export type ManualMethod = "cash" | "transfer";
 
 export const NO_CONNECTION = "No connection. Check Wi-Fi and try again.";
 
@@ -129,16 +132,18 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, sessionToken: string | null, fallback: string, body?: object): Promise<T> {
+async function call<T>(path: string, sessionToken: string | null, fallback: string, body?: object | FormData): Promise<T> {
   if (!sessionToken) throw new ApiError("Your session expired. Sign in again.");
+  const form = body instanceof FormData;
   let response: Response;
   try {
     response = await fetch(path, {
       method: body ? "POST" : "GET",
-      headers: { Authorization: `Bearer ${sessionToken}`, ...(body && { "Content-Type": "application/json" }) },
-      body: body && JSON.stringify(body),
-      // Venue Wi-Fi: never leave the desk hanging.
-      signal: AbortSignal.timeout(8000),
+      // FormData sets its own multipart Content-Type.
+      headers: { Authorization: `Bearer ${sessionToken}`, ...(body && !form && { "Content-Type": "application/json" }) },
+      body: form ? body : body && JSON.stringify(body),
+      // Venue Wi-Fi: never leave the desk hanging (a transfer photo gets longer).
+      signal: AbortSignal.timeout(form ? 30000 : 8000),
     });
   } catch {
     throw new ApiError(NO_CONNECTION);
@@ -173,4 +178,22 @@ export const fetchUnclaimed = async (sessionToken: string | null) =>
 
 /** Add a cancelled or lapsed QR's tickets for Mayar payment `creditId`. */
 export const claimPayment = (paymentId: string, creditId: string, sessionToken: string | null) =>
-  call<ClaimedTickets>("/api/payments/claim", sessionToken, "Could not add the tickets. Try again.", { paymentId, creditId });
+  call<PaidTickets>("/api/payments/claim", sessionToken, "Could not add the tickets. Try again.", { paymentId, creditId });
+
+/** Cash or bank transfer for `quantity` more tickets; a transfer needs the JPEG photo of it. */
+export function payManually(
+  pass: string,
+  sessionNumber: number | null,
+  quantity: number,
+  method: ManualMethod,
+  proof: Blob | null,
+  sessionToken: string | null,
+) {
+  const form = new FormData();
+  form.append("pass", pass);
+  if (sessionNumber !== null) form.append("sessionNumber", String(sessionNumber));
+  form.append("quantity", String(quantity));
+  form.append("method", method);
+  if (proof) form.append("proof", proof, "transfer.jpg");
+  return call<PaidTickets>("/api/payments/manual", sessionToken, "Could not record the payment. Try again.", form);
+}

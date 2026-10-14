@@ -13,13 +13,19 @@ tickets per festival session. One Cloudflare Worker serves the app and the
 ## Tickets and the Participants tab
 
 - Each session seats `events.session_seat_limit` people (default 125; admin → Events → Edit, festival events). Every distinct person on the session's running order brings one guardian, so takes 2 seats; tickets sell the rest.
-- `POST /api/tickets` `{ pass, sessionNumber, quantity }` sets (0 clears) the tickets the scanned pass holds via `set_session_tickets`, serialised per session so two desks cannot oversell. Participants and performers buy for the session they play in; teachers pick any session.
+- Buying more tickets for an event with a `ticket_price` goes to a payment step. It shows (tickets − tickets already held) × price, and staff pick how it was paid:
+  - **QRIS**: see below.
+  - **Cash**: recorded as paid on the spot (`POST /api/payments/manual`, `record_ticket_payment`).
+  - **Bank transfer**: same as cash, plus a required photo of the transfer. The desk shrinks it to a JPEG of at most 1600 px. The Worker stores it in the private `ticket-transfer-proofs` bucket as `registration/<id>/<uuid>.jpg` or `customer/<id>/<uuid>.jpg` and saves the path on the payment (`ticket_payments.proof_path`). If the purchase is refused, the photo is deleted. Photos are visible only with the service role, e.g. in the Supabase dashboard.
+
+  Every purchase is a `ticket_payments` row with its `method`.
+- `POST /api/tickets` `{ pass, sessionNumber, quantity }` sets (0 clears) the tickets the scanned pass holds via `set_session_tickets`, serialised per session so two desks cannot oversell. The desk uses it to lower or remove tickets, and to buy them when no ticket price is set. Participants and performers buy for the session they play in; teachers pick any session.
 - `GET /api/event` (`scanner_event_overview`) returns the ongoing festival's running order grouped by session and category, with check-ins, tickets, and tickets left. The navbar strip and the Participants tab poll it every 30 s.
 
 ## QRIS (Mayar)
 
-- `events.ticket_price` (IDR; admin → Events → Edit, festival events) prices one ticket. Empty turns QRIS off.
-- In the ticket dialog, **Pay with QRIS** asks `POST /api/payments` for (tickets − tickets already held) × price, plus a unique code of 1–9 rupiah. The Worker holds those seats for 5 minutes (`start_ticket_payment`) and creates a Mayar "Pay Me" QR for that amount, e.g. IDR 150,004.
+- `events.ticket_price` (IDR; admin → Events → Edit, festival events) prices one ticket. If it's empty, there's no payment step: the desk records tickets without payment, as before.
+- With QRIS picked, **Show QRIS** asks `POST /api/payments` for the price plus a unique code of 1–9 rupiah. The Worker holds those seats for 5 minutes (`start_ticket_payment`) and creates a Mayar "Pay Me" QR for that amount, e.g. IDR 150,004.
 - The dialog calls `POST /api/payments/status` every second. The Worker reads Mayar's latest payme credits, and `settle_ticket_payment` claims the first unclaimed `paid`/`settled` credit of exactly that amount made while the QR was live, then adds the tickets. **Cancel payment** checks one last time before dropping the QR.
 - Mayar's history does not say which QR a credit paid, so the amount is the only link. The unique code is picked at random from the codes no waiting QR of the same base amount is using, so up to nine desks can wait on the same number of tickets at once. A tenth is refused until one is paid, cancelled or expired.
 - The code also keeps round Pay Me credits from elsewhere on the account from matching a desk QR. A non-round credit of exactly the same amount made while that QR waits would still be claimed, so avoid using Pay Me elsewhere during the festival.

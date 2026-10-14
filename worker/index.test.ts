@@ -23,11 +23,22 @@ let mayarResult: (body: { query: string; variables: Record<string, unknown> }) =
   throw new Error("unexpected Mayar call");
 };
 const mayarCalls: { query: string; variables: Record<string, unknown>; auth: string | null }[] = [];
+// Supabase Storage (transfer photos): every call, answered 200.
+const storageCalls: { method: string; path: string; type: string | null; bytes: number }[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.endsWith("/.well-known/jwks.json")) return Response.json({ keys: [jwk] });
   const name = url.match(/^https:\/\/db\.test\/rest\/v1\/rpc\/(\w+)$/)?.[1];
+  if (url.startsWith("https://db.test/storage/v1/object/ticket-transfer-proofs/")) {
+    storageCalls.push({
+      method: String(init?.method),
+      path: url.slice("https://db.test/storage/v1/object/ticket-transfer-proofs/".length),
+      type: new Headers(init?.headers).get("Content-Type"),
+      bytes: init?.body instanceof Blob ? init.body.size : 0,
+    });
+    return Response.json({ Key: "ok" });
+  }
   if (url === "https://api.mayar.id/graphql") {
     const body = JSON.parse(String(init?.body));
     mayarCalls.push({ ...body, auth: new Headers(init?.headers).get("Authorization") });
@@ -50,6 +61,7 @@ beforeEach(() => {
   };
   rpcCalls.length = 0;
   mayarCalls.length = 0;
+  storageCalls.length = 0;
 });
 const lastCall = (name: string) => rpcCalls.filter((c) => c.name === name).at(-1)?.args;
 
@@ -271,4 +283,55 @@ test("unclaimed QRIS: listed from Mayar's credits; a claim re-reads the credit f
   expect((await refused.json<{ error: string }>()).error).toContain("already used");
   expect((await post("/api/payments/claim", token, { paymentId })).status).toBe(400);
   expect((await post("/api/payments/claim", await session({ role: "jury" }), { paymentId, creditId: "c9" })).status).toBe(401);
+});
+
+const manual = async (token: string, fields: Record<string, string | Blob>) => {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.append(key, value);
+  return worker.fetch(new Request("https://scanner.test/api/payments/manual", {
+    method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form,
+  }), env);
+};
+const photo = new File([new Uint8Array(2048)], "transfer.jpg", { type: "image/jpeg" });
+
+test("cash: recorded for the signed pass holder, no photo", async () => {
+  rpcResults.record_ticket_payment = { status: "paid", method: "cash", amount: 150000, sessionNumber: 2, quantity: 3, ticketsLeft: 40, holderName: "Kid A" };
+  const res = await manual(await session({ role: "reg_staff" }), { pass: performerPass, quantity: "2", method: "cash", proof: photo });
+  expect(res.status).toBe(200);
+  expect(lastCall("record_ticket_payment")).toEqual({
+    p_registration_id: registrationId, p_customer_id: null, p_event_id: null, p_holder: "performer:1",
+    p_session_number: null, p_quantity: 2, p_method: "cash", p_proof_path: null, p_created_by: "user_1",
+  });
+  expect(storageCalls).toHaveLength(0);
+});
+
+test("bank transfer: the photo is stored first and its path recorded; a refused purchase deletes it", async () => {
+  const token = await session({ role: "reg_staff" });
+  rpcResults.record_ticket_payment = { status: "paid", method: "transfer", amount: 75000, sessionNumber: 3, quantity: 1, ticketsLeft: 9, holderName: "Elyssa" };
+  const res = await manual(token, { pass: customerPass, quantity: "1", sessionNumber: "3", method: "transfer", proof: photo });
+  expect(res.status).toBe(200);
+  expect(storageCalls).toHaveLength(1);
+  expect(storageCalls[0]).toMatchObject({ method: "POST", type: "image/jpeg", bytes: 2048 });
+  expect(storageCalls[0].path).toMatch(/^customer\/753891ed-51ab-4c89-baca-99801f1ebcd3\/[0-9a-f-]{36}\.jpg$/);
+  expect(lastCall("record_ticket_payment")).toMatchObject({ p_session_number: 3, p_method: "transfer", p_proof_path: storageCalls[0].path });
+
+  storageCalls.length = 0;
+  rpcResults.record_ticket_payment = { error: "over_capacity", sessionNumber: 3, available: 0 };
+  const full = await manual(token, { pass, quantity: "1", method: "transfer", proof: photo });
+  expect(full.status).toBe(409);
+  expect(storageCalls.map((c) => c.method)).toEqual(["POST", "DELETE"]);
+  expect(storageCalls[1].path).toBe(storageCalls[0].path);
+  expect(storageCalls[0].path).toStartWith(`registration/${registrationId}/`);
+});
+
+test("bank transfer needs a JPEG photo; the method must be cash or transfer", async () => {
+  const token = await session({ role: "reg_staff" });
+  rpcResults.record_ticket_payment = { status: "paid" };
+  expect((await manual(token, { pass, quantity: "1", method: "transfer" })).status).toBe(400);
+  expect((await manual(token, { pass, quantity: "1", method: "transfer", proof: new File(["x"], "a.png", { type: "image/png" }) })).status).toBe(400);
+  expect((await manual(token, { pass, quantity: "1", method: "card" })).status).toBe(400);
+  expect((await manual(token, { pass, quantity: "0", method: "cash" })).status).toBe(400);
+  expect((await manual(await session({ role: "jury" }), { pass, quantity: "1", method: "cash" })).status).toBe(401);
+  expect(rpcCalls.filter((c) => c.name === "record_ticket_payment")).toHaveLength(0);
+  expect(storageCalls).toHaveLength(0);
 });

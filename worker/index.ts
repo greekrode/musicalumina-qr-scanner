@@ -6,7 +6,11 @@
 //                      (check_in_pass for registration passes,
 //                      check_in_customer_pass for customer teachers) and
 //                      scanner_pass_context (where the holder plays, their tickets).
-//   POST /api/tickets  set the tickets a scanned pass holds for one session.
+//   POST /api/tickets  set the tickets a scanned pass holds for one session
+//                      (lowering or removing; once the event has a ticket
+//                      price, the desk buys through a payment route instead).
+//   POST /api/payments/manual  cash or bank transfer for more tickets: stores
+//                      the transfer photo, then record_ticket_payment.
 //   POST /api/payments start a QRIS payment for more tickets: holds the seats
 //                      (start_ticket_payment) and creates a Mayar QR for
 //                      ticket price × tickets + a 1–9 unique code.
@@ -125,8 +129,11 @@ function holderArgs(pass: Pass) {
       };
 }
 
+/** The signed pass from a JSON or multipart body (bank transfer photos), and the rest of the body. */
 async function readPass(request: Request, env: Env): Promise<{ pass: Pass; body: Record<string, unknown> } | Response> {
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const body = (request.headers.get("Content-Type") ?? "").startsWith("multipart/form-data")
+    ? await request.formData().then((form) => Object.fromEntries(form), () => null)
+    : ((await request.json().catch(() => null)) as Record<string, unknown> | null);
   if (typeof body?.pass !== "string") return json({ error: "Missing pass" }, 400);
   try {
     return { pass: await decodePass(env.QR_PASS_SECRET, body.pass.trim()), body };
@@ -289,6 +296,77 @@ async function startPayment(request: Request, env: Env): Promise<Response> {
   return json({ ...started, qrCode });
 }
 
+const PROOF_BUCKET = "ticket-transfer-proofs";
+const MAX_PROOF_BYTES = 5 * 1024 * 1024; // must match the bucket's file_size_limit
+
+function storageObject(env: Env, path: string, init: RequestInit): Promise<Response> {
+  return fetch(`${env.SUPABASE_URL}/storage/v1/object/${PROOF_BUCKET}/${path}`, {
+    ...init,
+    headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, ...init.headers },
+    signal: AbortSignal.timeout(15000),
+  });
+}
+
+/** Cash or bank transfer, paid at the desk: multipart pass, sessionNumber, quantity, method, proof (JPEG, transfer only). */
+async function manualPayment(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const read = await readPass(request, env);
+  if (read instanceof Response) return read;
+  const { pass, body } = read;
+  const ask = ticketRequest({
+    quantity: Number(body.quantity),
+    sessionNumber: body.sessionNumber ? Number(body.sessionNumber) : null,
+  }, 1);
+  if (ask instanceof Response) return ask;
+  const { method, proof } = body;
+  if (method !== "cash" && method !== "transfer") return json({ error: "Pick cash or bank transfer." }, 400);
+
+  let proofPath: string | null = null;
+  if (method === "transfer") {
+    if (!(proof instanceof File) || proof.size === 0) return json({ error: "Take a photo of the bank transfer." }, 400);
+    if (proof.type !== "image/jpeg" || proof.size > MAX_PROOF_BYTES) return json({ error: "The transfer photo must be a JPEG under 5 MB." }, 400);
+    // Grouped by who paid, so the photo is easy to find later.
+    const owner = pass.kind === "customer" ? `customer/${pass.customerId}` : `registration/${pass.registrationId}`;
+    proofPath = `${owner}/${crypto.randomUUID()}.jpg`;
+    let uploaded: Response;
+    try {
+      uploaded = await storageObject(env, proofPath, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: proof });
+    } catch (error) {
+      console.error("transfer proof upload unreachable", error);
+      return json({ error: "Could not save the transfer photo. Try again." }, 503);
+    }
+    if (!uploaded.ok) {
+      console.error("transfer proof upload failed", uploaded.status, await uploaded.text());
+      return json({ error: "Could not save the transfer photo. Try again." }, 502);
+    }
+  }
+
+  let result: Record<string, unknown> | null = null;
+  try {
+    result = await rpc(env, "record_ticket_payment", {
+      ...holderArgs(pass),
+      p_session_number: ask.sessionNumber,
+      p_quantity: ask.quantity,
+      p_method: method,
+      p_proof_path: proofPath,
+      p_created_by: userId,
+    });
+  } catch (error) {
+    if (!(error instanceof ServiceUnavailable)) throw error;
+    return json({ error: "Payment service unavailable. Try again." }, error.status);
+  } finally {
+    // A refused purchase keeps no photo.
+    if (proofPath && (!result || result.error !== undefined)) {
+      await storageObject(env, proofPath, { method: "DELETE" }).catch(() => null);
+    }
+  }
+  if (result && result.error === undefined) return json(result);
+  return result?.error === "no_price"
+    ? json({ error: "No ticket price is set for this event (admin → Events → Edit)." }, 422)
+    : ticketRefusal(result ?? {}, ask.sessionNumber, 1);
+}
+
 /** Mayar's latest payme credits handed to a payment RPC as p_items, or the response to send instead. */
 async function rpcWithCredits(env: Env, name: string, args: object): Promise<{ result: unknown } | Response> {
   if (!env.MAYAR_TOKEN) return json({ error: "QRIS is not set up. Ask an admin to set MAYAR_TOKEN." }, 503);
@@ -372,6 +450,7 @@ const ROUTES: Record<string, [method: string, handler: (request: Request, env: E
   "/api/payments/status": ["POST", paymentStatus],
   "/api/payments/unclaimed": ["GET", unclaimedPayments],
   "/api/payments/claim": ["POST", claimPayment],
+  "/api/payments/manual": ["POST", manualPayment],
   "/api/event": ["GET", overview],
 };
 
