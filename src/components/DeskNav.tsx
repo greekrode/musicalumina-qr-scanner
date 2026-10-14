@@ -1,5 +1,6 @@
-import { AlertCircle, Loader2, RefreshCw, ScanLine, Ticket, Users } from "lucide-react";
-import type { EventOverview } from "../hooks/useEventOverview";
+import { AlertCircle, Loader2, QrCode, RefreshCw, ScanLine, Ticket, Users } from "lucide-react";
+import type { Polled } from "../hooks/usePolled";
+import type { Overview } from "../lib/api";
 import { currentSessionNumber } from "../lib/schedule";
 
 export type DeskTab = "scan" | "participants";
@@ -31,9 +32,22 @@ export function DeskTabs({ tab, onChange }: { tab: DeskTab; onChange: (tab: Desk
   );
 }
 
-/** Navbar row: audience tickets still on sale per session. Tap a session to see who plays. */
-export function TicketsStrip({ data, onSelectSession }: { data: EventOverview; onSelectSession: (session: number) => void }) {
-  const { overview, error, refresh } = data;
+/**
+ * Navbar row: audience tickets still on sale per session (tap a session to see
+ * who plays), led by QRIS payments no desk claimed yet.
+ */
+export function TicketsStrip({
+  data,
+  unclaimed,
+  onSelectSession,
+  onOpenUnclaimed,
+}: {
+  data: Polled<Overview>;
+  unclaimed: number;
+  onSelectSession: (session: number) => void;
+  onOpenUnclaimed: () => void;
+}) {
+  const { value: overview, error, refresh } = data;
   if (overview && !overview.event) return null; // no festival running order published
 
   const sessions = overview?.sessions ?? [];
@@ -42,6 +56,15 @@ export function TicketsStrip({ data, onSelectSession }: { data: EventOverview; o
   return (
     <div className="border-t border-rule-hairline">
       <div className="no-scrollbar mx-auto flex h-11 max-w-3xl items-center gap-2 overflow-x-auto px-4">
+        {unclaimed > 0 && (
+          <button
+            type="button"
+            onClick={onOpenUnclaimed}
+            className="type-label inline-flex h-7 shrink-0 items-center gap-1.5 rounded-sm border border-marigold bg-status-upcoming-bg px-2.5 text-status-upcoming-fg"
+          >
+            <QrCode className="h-3.5 w-3.5" aria-hidden /> {unclaimed} unclaimed
+          </button>
+        )}
         <span className="type-label inline-flex shrink-0 items-center gap-1.5 pr-1 text-ink-muted">
           <Ticket className="h-3.5 w-3.5" aria-hidden /> Tickets left
         </span>

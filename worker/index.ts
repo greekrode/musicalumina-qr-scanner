@@ -9,10 +9,13 @@
 //   POST /api/tickets  set the tickets a scanned pass holds for one session.
 //   POST /api/payments start a QRIS payment for more tickets: holds the seats
 //                      (start_ticket_payment) and creates a Mayar QR for
-//                      ticket price × tickets.
+//                      ticket price × tickets + a 1–9 unique code.
 //   POST /api/payments/status  the desk polls this every second: reads Mayar's
 //                      latest payme credits and settle_ticket_payment adds the
 //                      tickets once a matching credit lands (or cancels).
+//   GET  /api/payments/unclaimed  Mayar credits that landed after their QR was
+//                      cancelled or lapsed, with the QRs they could pay.
+//   POST /api/payments/claim  staff add such a QR's tickets for one credit.
 //   GET  /api/event    the ongoing festival's running order, check-ins and
 //                      tickets left per session (Participants tab + navbar).
 import { createRemoteJWKSet, errors, jwtVerify } from "jose";
@@ -286,31 +289,69 @@ async function startPayment(request: Request, env: Env): Promise<Response> {
   return json({ ...started, qrCode });
 }
 
-async function paymentStatus(request: Request, env: Env): Promise<Response> {
-  const userId = await authorize(request, env);
-  if (userId instanceof Response) return userId;
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (typeof body?.paymentId !== "string" || !UUID.test(body.paymentId)) return json({ error: "Missing payment" }, 400);
+/** Mayar's latest payme credits handed to a payment RPC as p_items, or the response to send instead. */
+async function rpcWithCredits(env: Env, name: string, args: object): Promise<{ result: unknown } | Response> {
   if (!env.MAYAR_TOKEN) return json({ error: "QRIS is not set up. Ask an admin to set MAYAR_TOKEN." }, 503);
-
   let credits: PaymeCredit[];
   try {
     credits = await recentPaymeCredits(env.MAYAR_TOKEN);
   } catch (error) {
     return mayarFailure(error);
   }
-  let result: Record<string, unknown> | null;
   try {
-    result = await rpc(env, "settle_ticket_payment", {
-      p_payment_id: body.paymentId,
-      p_items: credits,
-      p_cancel: body.cancel === true,
-    });
+    return { result: await rpc(env, name, { ...args, p_items: credits }) };
   } catch (error) {
     if (!(error instanceof ServiceUnavailable)) throw error;
     return json({ error: "Payment service unavailable. Try again." }, error.status);
   }
+}
+
+async function paymentStatus(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof body?.paymentId !== "string" || !UUID.test(body.paymentId)) return json({ error: "Missing payment" }, 400);
+
+  const settled = await rpcWithCredits(env, "settle_ticket_payment", { p_payment_id: body.paymentId, p_cancel: body.cancel === true });
+  if (settled instanceof Response) return settled;
+  const result = settled.result as Record<string, unknown> | null;
   return result && result.error === undefined ? json(result) : json({ error: "Payment not found." }, 404);
+}
+
+async function unclaimedPayments(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const listed = await rpcWithCredits(env, "unclaimed_ticket_payments", {});
+  return listed instanceof Response ? listed : json({ credits: listed.result ?? [] });
+}
+
+const CLAIM_REFUSALS: Record<string, [status: number, error: string]> = {
+  not_found: [404, "Payment not found."],
+  already_paid: [409, "Those tickets were already added."],
+  still_pending: [409, "That QR is still on a desk's screen; it will add the tickets itself."],
+  no_credit: [409, "That Mayar payment does not match this QR any more. Refresh the list."],
+  credit_claimed: [409, "That Mayar payment was already used for other tickets. Refresh the list."],
+};
+
+async function claimPayment(request: Request, env: Env): Promise<Response> {
+  const userId = await authorize(request, env);
+  if (userId instanceof Response) return userId;
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof body?.paymentId !== "string" || !UUID.test(body.paymentId) || typeof body.creditId !== "string" || !body.creditId) {
+    return json({ error: "Missing payment" }, 400);
+  }
+
+  // The credit is re-read from Mayar, never taken from the client.
+  const claimed = await rpcWithCredits(env, "claim_ticket_payment", {
+    p_payment_id: body.paymentId,
+    p_item_id: body.creditId,
+    p_claimed_by: userId,
+  });
+  if (claimed instanceof Response) return claimed;
+  const result = claimed.result as Record<string, unknown> | null;
+  if (result && result.error === undefined) return json(result);
+  const [status, error] = CLAIM_REFUSALS[String(result?.error)] ?? CLAIM_REFUSALS.not_found;
+  return json({ error }, status);
 }
 
 async function overview(request: Request, env: Env): Promise<Response> {
@@ -329,6 +370,8 @@ const ROUTES: Record<string, [method: string, handler: (request: Request, env: E
   "/api/tickets": ["POST", tickets],
   "/api/payments": ["POST", startPayment],
   "/api/payments/status": ["POST", paymentStatus],
+  "/api/payments/unclaimed": ["GET", unclaimedPayments],
+  "/api/payments/claim": ["POST", claimPayment],
   "/api/event": ["GET", overview],
 };
 

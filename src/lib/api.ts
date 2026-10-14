@@ -103,6 +103,21 @@ export type PaymentStatus =
   | { status: "pending" | "cancelled" | "expired"; amount: number; expiresAt: string }
   | ({ status: "paid"; amount: number } & SavedTickets);
 
+/** A QR that was cancelled or lapsed before its payment landed. */
+export type UnclaimedQr = {
+  paymentId: string;
+  status: "cancelled" | "expired";
+  holderName: string | null;
+  sessionNumber: number;
+  quantity: number;
+  createdAt: string;
+};
+
+/** A Mayar payment no desk claimed, with the QRs of exactly that amount it could pay. */
+export type UnclaimedCredit = { id: string; amount: number; paidAt: string; payments: UnclaimedQr[] };
+
+export type ClaimedTickets = SavedTickets & { amount: number; holderName: string | null };
+
 export const NO_CONNECTION = "No connection. Check Wi-Fi and try again.";
 
 export class ApiError extends Error {
@@ -152,3 +167,10 @@ export const startQrisPayment = (pass: string, sessionNumber: number | null, qua
 /** Has the QR been paid? With `cancel`, a last check, then the QR is dropped. */
 export const checkQrisPayment = (paymentId: string, cancel: boolean, sessionToken: string | null) =>
   call<PaymentStatus>("/api/payments/status", sessionToken, "Could not check the payment.", { paymentId, cancel });
+
+export const fetchUnclaimed = async (sessionToken: string | null) =>
+  (await call<{ credits: UnclaimedCredit[] }>("/api/payments/unclaimed", sessionToken, "Could not check Mayar for unclaimed payments.")).credits;
+
+/** Add a cancelled or lapsed QR's tickets for Mayar payment `creditId`. */
+export const claimPayment = (paymentId: string, creditId: string, sessionToken: string | null) =>
+  call<ClaimedTickets>("/api/payments/claim", sessionToken, "Could not add the tickets. Try again.", { paymentId, creditId });

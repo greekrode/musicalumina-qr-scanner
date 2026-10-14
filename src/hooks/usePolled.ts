@@ -1,23 +1,25 @@
 import { useAuth } from "@clerk/clerk-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchOverview, NO_CONNECTION, type Overview } from "../lib/api";
+import { NO_CONNECTION } from "../lib/api";
 
-// Other desks sell tickets too; keep the navbar counts fresh.
+/** Desk data other desks change too (seats, QRIS payments), refreshed every 30 s and on return to the tab. */
 const POLL_MS = 30_000;
 
-export type EventOverview = {
-  overview: Overview | null;
+export type Polled<T> = {
+  value: T | null;
   error: string | null;
   updatedAt: number | null;
   refresh: () => Promise<void>;
 };
 
-export function useEventOverview(enabled: boolean): EventOverview {
+export function usePolled<T>(enabled: boolean, load: (sessionToken: string | null) => Promise<T>, failure: string): Polled<T> {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   getTokenRef.current = getToken;
+  const loadRef = useRef(load);
+  loadRef.current = load;
   const sequenceRef = useRef(0);
-  const [overview, setOverview] = useState<Overview | null>(null);
+  const [value, setValue] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
 
@@ -28,15 +30,15 @@ export function useEventOverview(enabled: boolean): EventOverview {
       const token = await getTokenRef.current().catch(() => {
         throw new Error(NO_CONNECTION);
       });
-      const next = await fetchOverview(token);
+      const next = await loadRef.current(token);
       if (id !== sequenceRef.current) return; // a newer request owns the state
-      setOverview(next);
+      setValue(next);
       setError(null);
       setUpdatedAt(Date.now());
-    } catch (failure) {
-      if (id === sequenceRef.current) setError(failure instanceof Error ? failure.message : "Could not load the schedule.");
+    } catch (caught) {
+      if (id === sequenceRef.current) setError(caught instanceof Error ? caught.message : failure);
     }
-  }, []);
+  }, [failure]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -52,5 +54,5 @@ export function useEventOverview(enabled: boolean): EventOverview {
     };
   }, [enabled, refresh]);
 
-  return { overview, error, updatedAt, refresh };
+  return { value, error, updatedAt, refresh };
 }

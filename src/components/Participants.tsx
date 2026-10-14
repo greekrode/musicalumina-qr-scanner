@@ -1,12 +1,12 @@
 import { CheckCircle2, ChevronDown, Circle, Loader2, RefreshCw, Ticket } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { EventOverview } from "../hooks/useEventOverview";
-import type { OverviewEntry, OverviewSession } from "../lib/api";
+import type { Polled } from "../hooks/usePolled";
+import type { Overview, OverviewEntry, OverviewSession } from "../lib/api";
 import { clock, currentSessionNumber, ticketsWord } from "../lib/schedule";
 
 /** Running order grouped by session, then category, as on the event page. */
-export default function Participants({ data, focus }: { data: EventOverview; focus: { session: number; nonce: number } | null }) {
-  const { overview, error, updatedAt, refresh } = data;
+export default function Participants({ data, focus }: { data: Polled<Overview>; focus: { session: number; nonce: number } | null }) {
+  const { value: overview, error, updatedAt, refresh } = data;
   const [closed, setClosed] = useState<Set<number>>(() => new Set());
   const [refreshing, setRefreshing] = useState(false);
 

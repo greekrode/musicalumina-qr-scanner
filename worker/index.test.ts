@@ -249,3 +249,26 @@ test("QRIS status: hands Mayar's well-formed payme credits to settle_ticket_paym
   rpcResults.settle_ticket_payment = { error: "not_found" };
   expect((await post("/api/payments/status", token, { paymentId })).status).toBe(404);
 });
+
+test("unclaimed QRIS: listed from Mayar's credits; a claim re-reads the credit from Mayar, not the client", async () => {
+  const token = await session({ role: "reg_staff" });
+  const paymentId = "0b5e0f31-8a43-4c8e-9a39-0d3c6f1a2b44";
+  const credit = { id: "c9", createdAt: 1791949358431, credit: 150007, status: "paid" };
+  mayarResult = () => ({ data: { getAllBalanceHistoryPage: { items: [credit] } } });
+  rpcResults.unclaimed_ticket_payments = [{ id: "c9", amount: 150007, paidAt: "t", payments: [{ paymentId, status: "cancelled" }] }];
+  const listed = await worker.fetch(new Request("https://scanner.test/api/payments/unclaimed", { headers: { Authorization: `Bearer ${token}` } }), env);
+  expect(await listed.json<object>()).toEqual({ credits: rpcResults.unclaimed_ticket_payments });
+  expect(lastCall("unclaimed_ticket_payments")).toEqual({ p_items: [credit] });
+
+  rpcResults.claim_ticket_payment = { status: "paid", amount: 150007, sessionNumber: 1, quantity: 2, ticketsLeft: 61, holderName: "Kid A" };
+  const claimed = await post("/api/payments/claim", token, { paymentId, creditId: "c9", amount: 1 });
+  expect(claimed.status).toBe(200);
+  expect(lastCall("claim_ticket_payment")).toEqual({ p_payment_id: paymentId, p_item_id: "c9", p_claimed_by: "user_1", p_items: [credit] });
+
+  rpcResults.claim_ticket_payment = { error: "credit_claimed" };
+  const refused = await post("/api/payments/claim", token, { paymentId, creditId: "c9" });
+  expect(refused.status).toBe(409);
+  expect((await refused.json<{ error: string }>()).error).toContain("already used");
+  expect((await post("/api/payments/claim", token, { paymentId })).status).toBe(400);
+  expect((await post("/api/payments/claim", await session({ role: "jury" }), { paymentId, creditId: "c9" })).status).toBe(401);
+});
