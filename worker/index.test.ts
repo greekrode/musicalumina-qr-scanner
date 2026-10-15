@@ -324,6 +324,30 @@ test("bank transfer: the photo is stored first and its path recorded; a refused 
   expect(storageCalls[0].path).toStartWith(`registration/${registrationId}/`);
 });
 
+test("walk-ins: staff sell without a pass for the event; holder is walkin, never a client-picked registration", async () => {
+  const token = await session({ role: "reg_staff" });
+  const eventId = "0b6a1d6e-3c52-4f3e-9d0a-6a1f2b3c4d5e";
+  rpcResults.start_ticket_payment = { paymentId: "p1", sessionNumber: 2, quantity: 2, amount: 150004, uniqueCode: 4, expiresAt: "x" };
+  mayarResult = () => ({ data: { createQrCodePayme: { qrCode: "QR", errorMessage: null } } });
+  const qris = await post("/api/payments", token, { walkinEventId: eventId, sessionNumber: 2, quantity: 2, registrationId });
+  expect(qris.status).toBe(200);
+  expect(lastCall("start_ticket_payment")).toEqual({
+    p_registration_id: null, p_customer_id: null, p_event_id: eventId, p_holder: "walkin",
+    p_session_number: 2, p_quantity: 2, p_created_by: "user_1",
+  });
+
+  rpcResults.record_ticket_payment = { status: "paid", method: "transfer", amount: 75000, sessionNumber: 1, quantity: 1, ticketsLeft: 9, holderName: "Walk-in guest" };
+  const transfer = await manual(token, { walkinEventId: eventId, quantity: "1", sessionNumber: "1", method: "transfer", proof: photo });
+  expect(transfer.status).toBe(200);
+  expect(lastCall("record_ticket_payment")).toMatchObject({ p_holder: "walkin", p_event_id: eventId, p_registration_id: null, p_customer_id: null });
+  expect(storageCalls.at(-1)?.path).toStartWith(`walkin/${eventId}/`);
+
+  expect((await post("/api/payments", token, { walkinEventId: "nope", sessionNumber: 1, quantity: 1 })).status).toBe(400);
+  expect((await post("/api/payments", await session({ role: "jury" }), { walkinEventId: eventId, sessionNumber: 1, quantity: 1 })).status).toBe(401);
+  // Setting tickets directly still needs a signed pass.
+  expect((await post("/api/tickets", token, { walkinEventId: eventId, sessionNumber: 1, quantity: 1 })).status).toBe(400);
+});
+
 test("bank transfer needs a JPEG photo; the method must be cash or transfer", async () => {
   const token = await session({ role: "reg_staff" });
   rpcResults.record_ticket_payment = { status: "paid" };

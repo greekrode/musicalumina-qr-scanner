@@ -42,7 +42,7 @@ export default function App() {
     >
       {/* Kept mounted so the scan history survives a look at the list. */}
       <div hidden={tab !== "scan"}>
-        <QRScanner active={tab === "scan"} onActivity={() => void overview.refresh()} />
+        <QRScanner active={tab === "scan"} onActivity={() => void overview.refresh()} overview={overview.value ?? null} />
       </div>
       {tab === "participants" && <Participants data={overview} focus={focus} />}
       {showUnclaimed && (

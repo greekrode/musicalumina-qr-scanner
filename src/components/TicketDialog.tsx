@@ -8,6 +8,7 @@ import {
   payManually,
   saveTickets,
   startQrisPayment,
+  type Buyer,
   type PassContext,
   type QrisPayment,
   type SavedTickets,
@@ -27,7 +28,8 @@ const METHODS: { id: Method; label: string; Icon: typeof QrCode }[] = [
 const PAID_LABEL: Record<Method, string> = { qris: "Payment received", cash: "Cash received", transfer: "Transfer recorded" };
 
 /**
- * Buy or edit the audience tickets a scanned pass holds for one session.
+ * Buy or edit the audience tickets a scanned pass holds for one session, or
+ * sell tickets to a walk-in without a pass (a fresh purchase every time).
  * The count can never exceed what is free plus what the holder already has;
  * the server enforces the same limit for concurrent desks.
  *
@@ -37,13 +39,13 @@ const PAID_LABEL: Record<Method, string> = { qris: "Payment received", cash: "Ca
  * Lowering or removing tickets saves directly.
  */
 export default function TicketDialog({
-  pass,
+  buyer,
   holderName,
   context,
   onClose,
   onSaved,
 }: {
-  pass: string;
+  buyer: Buyer;
   holderName: string;
   context: PassContext;
   onClose: () => void;
@@ -162,13 +164,13 @@ export default function TicketDialog({
     event.preventDefault();
     if (!valid || saving || sessionNumber === null) return;
     setError(null);
-    if (buying) {
+    if (buying || !("pass" in buyer)) {
       setPaying(true);
       return;
     }
     setSaving(true);
     try {
-      onSaved(await saveTickets(pass, sessionNumber, quantity, await token()));
+      onSaved(await saveTickets(buyer.pass, sessionNumber, quantity, await token()));
       onClose();
     } catch (failure) {
       showRefusal(failure, "Could not save the tickets. Try again.");
@@ -183,11 +185,11 @@ export default function TicketDialog({
     setError(null);
     try {
       if (method === "qris") {
-        const started = await startQrisPayment(pass, sessionNumber, extra, await token());
+        const started = await startQrisPayment(buyer, sessionNumber, extra, await token());
         setNow(Date.now());
         setPayment(started);
       } else {
-        const result = await payManually(pass, sessionNumber, extra, method, method === "transfer" ? photo?.blob ?? null : null, await token());
+        const result = await payManually(buyer, sessionNumber, extra, method, method === "transfer" ? photo?.blob ?? null : null, await token());
         onSaved(result);
         setPaid({ ...result, added: extra, method });
       }

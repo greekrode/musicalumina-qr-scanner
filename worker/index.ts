@@ -14,6 +14,8 @@
 //   POST /api/payments start a QRIS payment for more tickets: holds the seats
 //                      (start_ticket_payment) and creates a Mayar QR for
 //                      ticket price × tickets + a 1–9 unique code.
+//                      Both payment routes also sell to walk-ins (members of
+//                      the public without a pass): walkinEventId instead of pass.
 //   POST /api/payments/status  the desk polls this every second: reads Mayar's
 //                      latest payme credits and settle_ticket_payment adds the
 //                      tickets once a matching credit lands (or cancels).
@@ -116,8 +118,16 @@ async function rpc(env: Env, name: string, args: object): Promise<Record<string,
   return (await response.json()) as Record<string, unknown> | null;
 }
 
-/** Who a pass belongs to, in the shape the ticket RPCs take. */
-function holderArgs(pass: Pass) {
+/** Who tickets are for, in the shape the ticket RPCs take. */
+type HolderArgs = {
+  p_registration_id: string | null;
+  p_customer_id: string | null;
+  p_event_id: string | null;
+  p_holder: string;
+};
+
+/** Who a pass belongs to. */
+function holderArgs(pass: Pass): HolderArgs {
   return pass.kind === "customer"
     ? { p_registration_id: null, p_customer_id: pass.customerId, p_event_id: pass.eventId, p_holder: "customer" }
     : {
@@ -129,17 +139,51 @@ function holderArgs(pass: Pass) {
       };
 }
 
-/** The signed pass from a JSON or multipart body (bank transfer photos), and the rest of the body. */
-async function readPass(request: Request, env: Env): Promise<{ pass: Pass; body: Record<string, unknown> } | Response> {
-  const body = (request.headers.get("Content-Type") ?? "").startsWith("multipart/form-data")
-    ? await request.formData().then((form) => Object.fromEntries(form), () => null)
-    : ((await request.json().catch(() => null)) as Record<string, unknown> | null);
+/** A JSON or multipart (bank transfer photos) body. */
+function readBody(request: Request): Promise<Record<string, unknown> | null> {
+  return (request.headers.get("Content-Type") ?? "").startsWith("multipart/form-data")
+    ? request.formData().then((form) => Object.fromEntries(form), () => null)
+    : (request.json().catch(() => null) as Promise<Record<string, unknown> | null>);
+}
+
+async function passFrom(body: Record<string, unknown> | null, env: Env): Promise<Pass | Response> {
   if (typeof body?.pass !== "string") return json({ error: "Missing pass" }, 400);
   try {
-    return { pass: await decodePass(env.QR_PASS_SECRET, body.pass.trim()), body };
+    return await decodePass(env.QR_PASS_SECRET, body.pass.trim());
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Invalid pass" }, 422);
   }
+}
+
+/** The signed pass and the rest of the body. */
+async function readPass(request: Request, env: Env): Promise<{ pass: Pass; body: Record<string, unknown> } | Response> {
+  const body = await readBody(request);
+  const pass = await passFrom(body, env);
+  return pass instanceof Response ? pass : { pass, body: body ?? {} };
+}
+
+/** Who pays for tickets; `owner` is where their transfer photos are filed. */
+type Buyer = { holder: HolderArgs; owner: string; body: Record<string, unknown> };
+
+/**
+ * A scanned pass, or a walk-in: a member of the public without a pass, sold
+ * to by the signed-in staff member for any session of event `walkinEventId`.
+ */
+async function readBuyer(request: Request, env: Env): Promise<Buyer | Response> {
+  const body = await readBody(request);
+  const eventId = body?.walkinEventId;
+  if (eventId !== undefined) {
+    if (typeof eventId !== "string" || !UUID.test(eventId)) return json({ error: "Missing event" }, 400);
+    return {
+      holder: { p_registration_id: null, p_customer_id: null, p_event_id: eventId, p_holder: "walkin" },
+      owner: `walkin/${eventId}`,
+      body: body ?? {},
+    };
+  }
+  const pass = await passFrom(body, env);
+  if (pass instanceof Response) return pass;
+  const owner = pass.kind === "customer" ? `customer/${pass.customerId}` : `registration/${pass.registrationId}`;
+  return { holder: holderArgs(pass), owner, body: body ?? {} };
 }
 
 async function checkin(request: Request, env: Env): Promise<Response> {
@@ -252,9 +296,9 @@ function mayarFailure(error: unknown): Response {
 async function startPayment(request: Request, env: Env): Promise<Response> {
   const userId = await authorize(request, env);
   if (userId instanceof Response) return userId;
-  const read = await readPass(request, env);
-  if (read instanceof Response) return read;
-  const { pass, body } = read;
+  const buyer = await readBuyer(request, env);
+  if (buyer instanceof Response) return buyer;
+  const { holder, body } = buyer;
   const ask = ticketRequest(body, 1);
   if (ask instanceof Response) return ask;
   if (!env.MAYAR_TOKEN) return json({ error: "QRIS is not set up. Ask an admin to set MAYAR_TOKEN." }, 503);
@@ -262,7 +306,7 @@ async function startPayment(request: Request, env: Env): Promise<Response> {
   let started: Record<string, unknown> | null;
   try {
     started = await rpc(env, "start_ticket_payment", {
-      ...holderArgs(pass),
+      ...holder,
       p_session_number: ask.sessionNumber,
       p_quantity: ask.quantity,
       p_created_by: userId,
@@ -307,13 +351,13 @@ function storageObject(env: Env, path: string, init: RequestInit): Promise<Respo
   });
 }
 
-/** Cash or bank transfer, paid at the desk: multipart pass, sessionNumber, quantity, method, proof (JPEG, transfer only). */
+/** Cash or bank transfer, paid at the desk: multipart pass (or walkinEventId), sessionNumber, quantity, method, proof (JPEG, transfer only). */
 async function manualPayment(request: Request, env: Env): Promise<Response> {
   const userId = await authorize(request, env);
   if (userId instanceof Response) return userId;
-  const read = await readPass(request, env);
-  if (read instanceof Response) return read;
-  const { pass, body } = read;
+  const buyer = await readBuyer(request, env);
+  if (buyer instanceof Response) return buyer;
+  const { holder, owner, body } = buyer;
   const ask = ticketRequest({
     quantity: Number(body.quantity),
     sessionNumber: body.sessionNumber ? Number(body.sessionNumber) : null,
@@ -327,7 +371,6 @@ async function manualPayment(request: Request, env: Env): Promise<Response> {
     if (!(proof instanceof File) || proof.size === 0) return json({ error: "Take a photo of the bank transfer." }, 400);
     if (proof.type !== "image/jpeg" || proof.size > MAX_PROOF_BYTES) return json({ error: "The transfer photo must be a JPEG under 5 MB." }, 400);
     // Grouped by who paid, so the photo is easy to find later.
-    const owner = pass.kind === "customer" ? `customer/${pass.customerId}` : `registration/${pass.registrationId}`;
     proofPath = `${owner}/${crypto.randomUUID()}.jpg`;
     let uploaded: Response;
     try {
@@ -345,7 +388,7 @@ async function manualPayment(request: Request, env: Env): Promise<Response> {
   let result: Record<string, unknown> | null = null;
   try {
     result = await rpc(env, "record_ticket_payment", {
-      ...holderArgs(pass),
+      ...holder,
       p_session_number: ask.sessionNumber,
       p_quantity: ask.quantity,
       p_method: method,

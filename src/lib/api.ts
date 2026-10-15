@@ -87,11 +87,14 @@ export type OverviewSession = SessionSeats & {
 
 /** The ongoing festival's running order (scanner_event_overview). */
 export type Overview = {
-  event: { id: string; title: string; seatLimit: number } | null;
+  event: { id: string; title: string; seatLimit: number; ticketPrice: number | null } | null;
   sessions: OverviewSession[];
 };
 
 export type SavedTickets = { sessionNumber: number; quantity: number; ticketsLeft: number };
+
+/** Who pays for tickets: a scanned pass, or a walk-in without one (sold for any session of the event). */
+export type Buyer = { pass: string } | { walkinEventId: string };
 
 /**
  * A QRIS payment on screen: the QR pays `amount` (price × `quantity` + `uniqueCode`)
@@ -166,8 +169,8 @@ export const saveTickets = (pass: string, sessionNumber: number | null, quantity
   call<SavedTickets>("/api/tickets", sessionToken, "Could not save the tickets. Try again.", { pass, sessionNumber, quantity });
 
 /** Hold the seats and get a Mayar QR for `quantity` more tickets. */
-export const startQrisPayment = (pass: string, sessionNumber: number | null, quantity: number, sessionToken: string | null) =>
-  call<QrisPayment>("/api/payments", sessionToken, "Could not start the QRIS payment. Try again.", { pass, sessionNumber, quantity });
+export const startQrisPayment = (buyer: Buyer, sessionNumber: number | null, quantity: number, sessionToken: string | null) =>
+  call<QrisPayment>("/api/payments", sessionToken, "Could not start the QRIS payment. Try again.", { ...buyer, sessionNumber, quantity });
 
 /** Has the QR been paid? With `cancel`, a last check, then the QR is dropped. */
 export const checkQrisPayment = (paymentId: string, cancel: boolean, sessionToken: string | null) =>
@@ -182,7 +185,7 @@ export const claimPayment = (paymentId: string, creditId: string, sessionToken: 
 
 /** Cash or bank transfer for `quantity` more tickets; a transfer needs the JPEG photo of it. */
 export function payManually(
-  pass: string,
+  buyer: Buyer,
   sessionNumber: number | null,
   quantity: number,
   method: ManualMethod,
@@ -190,7 +193,8 @@ export function payManually(
   sessionToken: string | null,
 ) {
   const form = new FormData();
-  form.append("pass", pass);
+  if ("pass" in buyer) form.append("pass", buyer.pass);
+  else form.append("walkinEventId", buyer.walkinEventId);
   if (sessionNumber !== null) form.append("sessionNumber", String(sessionNumber));
   form.append("quantity", String(quantity));
   form.append("method", method);

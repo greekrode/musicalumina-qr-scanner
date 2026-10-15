@@ -1,8 +1,8 @@
 import { useAuth } from "@clerk/clerk-react";
-import { Camera, CheckCircle2, AlertCircle, CalendarClock, Flashlight, FlashlightOff, History, Loader2, RotateCcw, ShieldCheck, Square, Ticket } from "lucide-react";
+import { Camera, CheckCircle2, AlertCircle, CalendarClock, Flashlight, FlashlightOff, History, Loader2, RotateCcw, ShieldCheck, Square, Ticket, UserPlus } from "lucide-react";
 import QrScanner from "qr-scanner";
 import { useEffect, useRef, useState } from "react";
-import { checkInPass, NO_CONNECTION, PASS_PREFIX, type CheckinResult, type PassContext, type SavedTickets } from "../lib/api";
+import { checkInPass, NO_CONNECTION, PASS_PREFIX, type CheckinResult, type Overview, type PassContext, type SavedTickets } from "../lib/api";
 import { clock, ticketsWord } from "../lib/schedule";
 import TicketDialog from "./TicketDialog";
 
@@ -69,8 +69,9 @@ function withTickets(context: PassContext, saved: SavedTickets): PassContext {
 /**
  * `active`: the Scan tab is showing; leaving it stops the camera.
  * `onActivity`: a check-in or ticket sale happened, so seat counts changed.
+ * `overview`: the ongoing festival, for selling tickets to walk-ins without a pass.
  */
-export default function QRScanner({ active, onActivity }: { active: boolean; onActivity: () => void }) {
+export default function QRScanner({ active, onActivity, overview }: { active: boolean; onActivity: () => void; overview: Overview | null }) {
   const { getToken, userId } = useAuth();
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerRef = useRef<QrScanner | null>(null);
@@ -95,7 +96,9 @@ export default function QRScanner({ active, onActivity }: { active: boolean; onA
   const [current, setCurrent] = useState<Scan | null>(null);
   const [history, setHistory] = useState<Finished[]>([]);
   const [ticketing, setTicketing] = useState<Done | null>(null);
-  ticketingRef.current = ticketing !== null;
+  const [walkin, setWalkin] = useState(false);
+  ticketingRef.current = ticketing !== null || walkin;
+  const walkinEvent = overview?.event?.ticketPrice ? overview.event : null;
 
   useEffect(() => {
     const video = videoRef.current!;
@@ -258,6 +261,14 @@ export default function QRScanner({ active, onActivity }: { active: boolean; onA
         </div>
       )}
 
+      {walkinEvent && overview && (
+        <div className="mx-auto max-w-md">
+          <button className="btn-outline w-full" onClick={() => setWalkin(true)}>
+            <UserPlus className="h-4 w-4" aria-hidden /> Sell to walk-in (no pass)
+          </button>
+        </div>
+      )}
+
       <div aria-live="polite" className="mx-auto max-w-md">
         {current && current.phase !== "verifying" && (
           <ResultCard scan={current} userId={userId} onBuy={current.phase === "done" ? () => setTicketing(current) : undefined} />
@@ -266,11 +277,29 @@ export default function QRScanner({ active, onActivity }: { active: boolean; onA
 
       {ticketing?.result.context && (
         <TicketDialog
-          pass={ticketing.pass}
+          buyer={{ pass: ticketing.pass }}
           holderName={ticketing.result.registration.name ?? "Pass holder"}
           context={ticketing.result.context}
           onClose={() => setTicketing(null)}
           onSaved={(saved) => applyTickets(ticketing.id, saved)}
+        />
+      )}
+
+      {walkin && walkinEvent && overview && (
+        <TicketDialog
+          buyer={{ walkinEventId: walkinEvent.id }}
+          holderName="Walk-in guest"
+          context={{
+            eventId: walkinEvent.id,
+            ticketPrice: walkinEvent.ticketPrice,
+            chooseSession: true,
+            fixedSession: null,
+            performances: [],
+            sessions: overview.sessions,
+            tickets: [],
+          }}
+          onClose={() => setWalkin(false)}
+          onSaved={() => onActivity()}
         />
       )}
 
