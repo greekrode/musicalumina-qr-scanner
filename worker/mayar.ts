@@ -64,11 +64,15 @@ const PAYME_CREDITS = `query getAllBalanceHistoryPage($input: BalanceHistoryInpu
   getAllBalanceHistoryPage(input: $input) { items { id createdAt credit status } }
 }`;
 
-/** The latest payme credits, newest first. */
+/**
+ * The latest payme credits, newest first. 100 rather than 20: the unclaimed
+ * list and claims only see credits in this window, and a festival morning
+ * passes 20 credits in under an hour.
+ */
 export async function recentPaymeCredits(token: string): Promise<PaymeCredit[]> {
   const data = await graphql<{ getAllBalanceHistoryPage: { items: Partial<PaymeCredit>[] | null } | null }>(token, PAYME_CREDITS, {
     input: {
-      pageSize: 20,
+      pageSize: 100,
       page: 1,
       sortDirection: "DESC",
       sortField: "createdAt",

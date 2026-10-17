@@ -13,7 +13,7 @@
 //                      the transfer photo, then record_ticket_payment.
 //   POST /api/payments start a QRIS payment for more tickets: holds the seats
 //                      (start_ticket_payment) and creates a Mayar QR for
-//                      ticket price × tickets + a 1–9 unique code.
+//                      ticket price × tickets + a 10–99 unique code.
 //                      Both payment routes also sell to walk-ins (members of
 //                      the public without a pass): walkinEventId instead of pass.
 //   POST /api/payments/status  the desk polls this every second: reads Mayar's
@@ -318,7 +318,7 @@ async function startPayment(request: Request, env: Env): Promise<Response> {
   if (!started || started.error !== undefined) {
     switch (started?.error) {
       case "amount_pending":
-        // Every unique code (1–9) for this amount is on a QR at another desk.
+        // Every unique code (10–99) is on a waiting QR.
         return json({
           error: `Too many desks are waiting for a QRIS payment of IDR ${Number(started.amount).toLocaleString("en-US")}. Wait for one to finish, or pay by cash.`,
         }, 409);

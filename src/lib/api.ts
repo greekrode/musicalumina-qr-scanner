@@ -98,7 +98,7 @@ export type Buyer = { pass: string } | { walkinEventId: string };
 
 /**
  * A QRIS payment on screen: the QR pays `amount` (price × `quantity` + `uniqueCode`)
- * for `quantity` more tickets. The 1–9 code keeps concurrent QRs of the same price apart.
+ * for `quantity` more tickets. The 10–99 code is unique among waiting QRs, so it tells them apart.
  */
 export type QrisPayment = { paymentId: string; sessionNumber: number; quantity: number; amount: number; uniqueCode: number; expiresAt: string; qrCode: string };
 

@@ -323,7 +323,7 @@ export default function TicketDialog({
           </div>
 
           {method === "qris" && (
-            <p className="mt-3 text-[0.8125rem] text-ink-subtle">The QR adds a 1–9 rupiah unique code so the payment can be matched.</p>
+            <p className="mt-3 text-[0.8125rem] text-ink-subtle">The QR adds a two-digit unique code (10–99 rupiah) so the payment can be matched.</p>
           )}
           {method === "cash" && <p className="mt-3 text-[0.8125rem] text-ink-subtle">Collect {idr(total)} in cash, then confirm.</p>}
           {method === "transfer" && (
